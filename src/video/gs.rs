@@ -1,6 +1,6 @@
 use gstreamer::prelude::*;
 use gstreamer::{self as gst};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 pub fn start_screen_stream(
     node_id: u32,
@@ -64,6 +64,24 @@ pub fn start_screen_stream(
     //     node_id, host, port
     // );
 
+    //PRE FIX, using vaapi
+    // let pipeline_description = format!(
+    //     "pipewiresrc path={} do-timestamp=true ! \
+    //  videorate drop-only=true ! \
+    //  video/x-raw,framerate=60/1 ! \
+    //  queue max-size-time=500000000 leaky=downstream ! \
+    //  videoconvert ! \
+    //  video/x-raw,format=NV12 ! \
+    //  vaapih264enc rate-control=cbr bitrate=15000 keyframe-period=90 quality-level=1 ! \
+    //  video/x-h264,profile=high ! \
+    //  h264parse ! \
+    //  rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
+    //  queue max-size-time=1000000000 ! \
+    //  udpsink host={} port={} sync=false async=false buffer-size=8388608",
+    //     node_id, host, port
+    // );
+
+    // POST FIX USING VAH v1 with suspicious quality
     let pipeline_description = format!(
         "pipewiresrc path={} do-timestamp=true ! \
      videorate drop-only=true ! \
@@ -71,7 +89,7 @@ pub fn start_screen_stream(
      queue max-size-time=500000000 leaky=downstream ! \
      videoconvert ! \
      video/x-raw,format=NV12 ! \
-     vaapih264enc rate-control=cbr bitrate=15000 keyframe-period=90 quality-level=1 ! \
+     vah264enc bitrate=15000000 rate-control=cbr key-int-max=90 ! \
      video/x-h264,profile=high ! \
      h264parse ! \
      rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
@@ -79,7 +97,22 @@ pub fn start_screen_stream(
      udpsink host={} port={} sync=false async=false buffer-size=8388608",
         node_id, host, port
     );
-    println!("Pipeline: {}", pipeline_description);
+
+    // let pipeline_description = format!(
+    //     "pipewiresrc path={} do-timestamp=true ! \
+    //  video/x-raw,width=1920,height=1080,framerate=60/1 ! \
+    //  videorate drop-only=true ! \
+    //  queue max-size-time=500000000 leaky=downstream ! \
+    //  videoconvert ! \
+    //  video/x-raw,format=NV12 ! \
+    //  vah264enc bitrate=15000000 rate-control=vbr key-int-max=60 ! \
+    //  video/x-h264,profile=high,stream-format=avc ! \
+    //  h264parse ! \
+    //  rtph264pay config-interval=1 pt=96 mtu=1400 ! \
+    //  udpsink host={} port={} sync=false async=false buffer-size=8388608",
+    //     node_id, host, port
+    // );
+    info!("Pipeline: {}", pipeline_description);
 
     let pipeline = gst::parse::launch(&pipeline_description)?;
     let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
@@ -87,8 +120,8 @@ pub fn start_screen_stream(
     let bus = pipeline.bus().unwrap();
     pipeline.set_state(gst::State::Playing)?;
 
-    println!("✓ Pipeline started successfully");
-    println!("✓ Streaming to {}:{}", host, port);
+    info!("Pipeline started successfully");
+    info!("Streaming to {}:{}", host, port);
 
     let mut last_print = std::time::Instant::now();
     let mut iteration_count = 0u64;
@@ -101,7 +134,7 @@ pub fn start_screen_stream(
                     break;
                 }
                 gst::MessageView::Error(err) => {
-                    eprintln!(
+                    error!(
                         "ERROR from {:?}: {} - Debug: {:?}",
                         err.src().map(|s| s.path_string()),
                         err.error(),
@@ -123,18 +156,18 @@ pub fn start_screen_stream(
                 gst::MessageView::StateChanged(s) => {
                     if let Some(src) = msg.src() {
                         if *src == pipeline.clone().upcast::<gst::Object>() {
-                            println!("Pipeline state changed: {:?} -> {:?}", s.old(), s.current());
+                            info!("Pipeline state changed: {:?} -> {:?}", s.old(), s.current());
                         }
                     }
                 }
                 gst::MessageView::Element(e) => {
                     if let Some(structure) = e.structure() {
-                        println!("Element message: {}", structure.name());
+                        info!("Element message: {}", structure.name());
                     }
                 }
                 gst::MessageView::Qos(_qos) => {
                     // QoS messages can be noisy, uncomment if needed
-                    // println!("QoS message received");
+                    // info!("QoS message received");
                 }
                 _ => {}
             }
@@ -147,16 +180,16 @@ pub fn start_screen_stream(
             // Get stats safely
             if let Some(udpsink) = pipeline.by_name("udpsink0") {
                 // Try different properties that might be available
-                println!("{:?}", udpsink.property_value("bytes-to-serve"));
+                info!("{:?}", udpsink.property_value("bytes-to-serve"));
             }
 
             // Get x264enc stats
             if let Some(encoder) = pipeline.by_name("x264enc0") {
-                println!("{:?}", encoder.property_value("qos"));
+                info!("{:?}", encoder.property_value("qos"));
             }
 
-            println!(
-                "⏰ Still streaming... ({} iterations, ~{} seconds)",
+            info!(
+                "Still streaming ({} iterations, ~{} seconds)",
                 iteration_count,
                 iteration_count * 2
             );
@@ -164,8 +197,8 @@ pub fn start_screen_stream(
         }
     }
 
-    println!("Stopping pipeline...");
+    info!("Stopping pipeline");
     pipeline.set_state(gst::State::Null)?;
-    println!("Pipeline stopped cleanly");
+    info!("Pipeline stopped cleanly");
     Ok(())
 }

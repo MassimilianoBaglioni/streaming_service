@@ -1,0 +1,8 @@
+<button
+  type="button"
+  class="cursor-pointer font-bold px-4 py-2 rounded-base transition active:scale-95"
+  [ngClass]="getClasses()"
+  (click)="clicked.emit()"
+>
+  {{ text }}
+</button>

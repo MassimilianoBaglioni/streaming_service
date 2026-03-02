@@ -1,6 +1,10 @@
 use gstreamer as gst;
 use gstreamer::prelude::*;
 
+pub fn client_fun() -> String {
+    String::from("CLIENT answer")
+}
+
 pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
     gst::init()?;
 
@@ -52,6 +56,24 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
     // println!("Pipeline: {}", pipeline_description);
 
     // QUALITY
+    // let pipeline_description = "\
+    // udpsrc port=5000 buffer-size=8388608 ! \
+    // application/x-rtp, \
+    //     media=(string)video, \
+    //     clock-rate=(int)90000, \
+    //     encoding-name=(string)H264, \
+    //     payload=(int)96 ! \
+    // rtpjitterbuffer latency=500 ! \
+    // queue max-size-time=1000000000 leaky=downstream ! \
+    // rtph264depay ! \
+    // h264parse ! \
+    // queue max-size-time=500000000 leaky=downstream ! \
+    // vaapih264dec ! \
+    // vaapipostproc ! \
+    // videoconvert ! \
+    // autovideosink sync=false";
+
+    // POST FIX USING VAH
     let pipeline_description = "\
     udpsrc port=5000 buffer-size=8388608 ! \
     application/x-rtp, \
@@ -64,8 +86,8 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
     rtph264depay ! \
     h264parse ! \
     queue max-size-time=500000000 leaky=downstream ! \
-    vaapih264dec ! \
-    vaapipostproc ! \
+    vah264dec ! \
+    vapostproc ! \
     videoconvert ! \
     autovideosink sync=false";
 
