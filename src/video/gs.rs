@@ -1,9 +1,13 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use gstreamer::prelude::*;
 use gstreamer::{self as gst};
 use tracing::{error, info, warn};
 
 pub fn start_screen_stream(
     node_id: u32,
+    stop_streaming_flag: Arc<AtomicBool>,
     host: &str,
     port: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -127,6 +131,11 @@ pub fn start_screen_stream(
     let mut iteration_count = 0u64;
 
     loop {
+        if stop_streaming_flag.load(Ordering::Relaxed) {
+            info!("stop_streaming_flag is true");
+            break;
+        }
+
         if let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) {
             match msg.view() {
                 gst::MessageView::Eos(..) => {
@@ -198,6 +207,8 @@ pub fn start_screen_stream(
     }
 
     info!("Stopping pipeline");
+    pipeline.send_event(gst::event::Eos::new());
+    std::thread::sleep(std::time::Duration::from_millis(500));
     pipeline.set_state(gst::State::Null)?;
     info!("Pipeline stopped cleanly");
     Ok(())

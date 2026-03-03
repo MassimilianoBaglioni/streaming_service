@@ -1,6 +1,7 @@
 import { Component } from '@angular/core';
 import { Button } from '../button/button';
 import { invoke } from '@tauri-apps/api/core';
+import { callCommand } from '../utils/tauri-invoke';
 
 @Component({
   selector: 'app-streaming',
@@ -10,18 +11,14 @@ import { invoke } from '@tauri-apps/api/core';
 })
 export class Streaming {
   async startStreaming() {
-    try {
-      await invoke('start_streaming');
-    } catch (err) {
-      console.error('Error invoking rust command: ', err);
-    }
+    callCommand('start_streaming');
   }
 
   async startListening() {
-    try {
-      await invoke('start_watching');
-    } catch (err) {
-      console.error('Error invoking rust command: ', err);
-    }
+    callCommand('start_watching');
+  }
+
+  async stopStreaming() {
+    callCommand('stop_streaming');
   }
 }

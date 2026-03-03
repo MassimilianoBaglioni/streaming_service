@@ -1,3 +1,7 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::thread::JoinHandle;
+
 use ashpd::WindowIdentifier;
 use ashpd::desktop::screencast::{Screencast, SourceType};
 use pipewire::properties::properties;
@@ -223,7 +227,7 @@ impl PipewireSource {
         return StreamSession { node_id };
     }
 
-    pub fn entry_point(&self) {
+    pub fn entry_point(&self, stop_streaming_flag: Arc<AtomicBool>) {
         let (pointers_tx, pointers_rx) = std::sync::mpsc::channel();
         let (close_tx, close_rx) = std::sync::mpsc::channel();
 
@@ -249,12 +253,16 @@ impl PipewireSource {
                     PipewireSource::identify_windows(handles.display_ptr, handles.surface_ptr)
                         .await;
 
-                gs::start_screen_stream(stream_session.node_id, "127.0.0.1", "5000")
-                    .expect("Error on starting gstreamer server");
+                gs::start_screen_stream(
+                    stream_session.node_id,
+                    stop_streaming_flag,
+                    "127.0.0.1",
+                    "5000",
+                )
+                .expect("Error on starting gstreamer server");
 
                 // Schedule the streaming thread with received pointers.
                 std::thread::spawn(move || {
-                    // !! TEMPORARY COMMENT TO TEST GSTREAMER
                     PipewireSource::start_streaming(Some(stream_session.node_id))
                         .expect("Error on start streaming");
                 })
@@ -272,7 +280,10 @@ impl PipewireSource {
             .expect("Error on streaming thread join");
     }
 
-    pub fn entry_point_gstreamer(&self) {
+    pub fn entry_point_gstreamer(
+        &self,
+        stop_streaming_flag: Arc<AtomicBool>,
+    ) -> JoinHandle<StreamSession> {
         let (pointers_tx, pointers_rx) = std::sync::mpsc::channel();
         let (close_tx, close_rx) = std::sync::mpsc::channel();
 
@@ -298,19 +309,19 @@ impl PipewireSource {
                     PipewireSource::identify_windows(handles.display_ptr, handles.surface_ptr)
                         .await;
 
-                info!("Before gs");
-                gs::start_screen_stream(stream_session.node_id, "127.0.0.1", "5000")
-                    .expect("Error on starting gstreamer server");
+                gs::start_screen_stream(
+                    stream_session.node_id,
+                    stop_streaming_flag,
+                    "127.0.0.1",
+                    "5000",
+                )
+                .expect("Error on starting gstreamer server");
                 stream_session
             })
         });
 
         create_window(pointers_tx, close_rx);
 
-        let session = init_streaming_thread_handle
-            .join()
-            .expect("Could not properly start the streaming thread");
-
-        info!("Node id: {:?}", session.node_id);
+        init_streaming_thread_handle
     }
 }
