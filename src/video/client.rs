@@ -100,14 +100,17 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
     pipeline.set_state(gst::State::Playing)?;
     info!("Receiver online. Listening on port 5000...");
 
+    // TODO add a separate tcp socket to send control packets, specifically the stop streaming packet to notify the client.
     let mut last_activity = std::time::Instant::now();
 
     loop {
-        if last_activity.elapsed().as_secs() >= 3 {
-            info!("No data received for 3 seconds, assuming stream ended.");
-            break;
-        }
+        // if last_activity.elapsed().as_secs() >= 6 {
+        //     info!("No data received for 3 seconds, assuming stream ended.");
+        //     break;
+        // }
         if let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) {
+            last_activity = std::time::Instant::now();
+
             match msg.view() {
                 gst::MessageView::Eos(..) => {
                     info!("Eos received, stopping the stream!");
@@ -135,9 +138,7 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
                 gst::MessageView::Qos(_qos) => {
                     //println!("{:?}", qos);
                 }
-                _ => {
-                    last_activity = std::time::Instant::now();
-                }
+                _ => {}
             }
         }
     }

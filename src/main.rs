@@ -1,5 +1,3 @@
-use std::sync::{Arc, atomic::AtomicBool};
-
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -11,11 +9,9 @@ fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
 
-    let stop_streaming_flag = Arc::new(AtomicBool::new(false));
-
     let pipewire = PipewireSource::new();
     pipewire
-        .entry_point_gstreamer(stop_streaming_flag)
+        .entry_point_gstreamer()
         .join()
         .expect("Error on streaming thread");
 }
