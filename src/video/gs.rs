@@ -11,8 +11,6 @@ pub fn start_screen_stream(
     host: &str,
     port: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    gst::init()?;
-
     // Enable GStreamer debug output (optional, can be noisy)
     // std::env::set_var("GST_DEBUG", "3");
 
@@ -119,9 +117,21 @@ pub fn start_screen_stream(
     info!("Pipeline: {}", pipeline_description);
 
     let pipeline = gst::parse::launch(&pipeline_description)?;
-    let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
+    let pipeline = match pipeline.downcast::<gst::Pipeline>() {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to downcast pipeline: {:?}", e);
+            return Err("Failed to downcast pipeline".into());
+        }
+    };
 
-    let bus = pipeline.bus().unwrap();
+    let bus = match pipeline.bus() {
+        Some(b) => b,
+        None => {
+            error!("Failed to get pipeline bus");
+            return Err("Failed to get pipeline bus".into());
+        }
+    };
     pipeline.set_state(gst::State::Playing)?;
 
     info!("Pipeline started successfully");
@@ -197,11 +207,11 @@ pub fn start_screen_stream(
                 info!("{:?}", encoder.property_value("qos"));
             }
 
-            info!(
-                "Still streaming ({} iterations, ~{} seconds)",
-                iteration_count,
-                iteration_count * 2
-            );
+            // info!(
+            //     "Still streaming ({} iterations, ~{} seconds)",
+            //     iteration_count,
+            //     iteration_count * 2
+            // );
             last_print = std::time::Instant::now();
         }
     }

@@ -1,6 +1,5 @@
 import { Component } from '@angular/core';
 import { Button } from '../button/button';
-import { invoke } from '@tauri-apps/api/core';
 import { callCommand } from '../utils/tauri-invoke';
 
 @Component({

@@ -1,8 +1,8 @@
 [package]
-name = "app"
+name = "streaming_server_app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A peer to peer streaming service"
+authors = ["Massimiliano Baglioni"]
 license = ""
 repository = ""
 edition = "2021"
@@ -26,3 +26,4 @@ tauri-plugin-log = "2"
 streaming_server = {path = "../"}
 tracing-subscriber = "0.3.22"
 tracing = "0.1.44"
+raw-window-handle = "0.6.2"

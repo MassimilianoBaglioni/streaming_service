@@ -1,4 +1,4 @@
 pub trait VideoSource: Send + Sync {
-    fn start_streaming(&self);
-    fn stop_streaming(&self);
+    fn start_streaming(&mut self);
+    fn stop_streaming(&mut self);
 }

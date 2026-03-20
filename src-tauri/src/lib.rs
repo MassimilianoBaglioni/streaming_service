@@ -2,18 +2,17 @@ pub mod commands;
 pub mod state;
 
 use commands::streaming::{start_streaming, start_watching, stop_streaming};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use state::app_state::AppState;
-use streaming_server::video::client::client_fun;
+use streaming_server::gstreamer as gst;
+use streaming_server::wayland::wayland_handles::WaylandHandles;
+use tauri::Manager;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-#[tauri::command]
-fn client_call() -> String {
-    client_fun()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    gst::init().expect("Error on gsteramer init");
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::DEBUG)
         .finish();
@@ -23,7 +22,6 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            client_call,
             start_streaming,
             stop_streaming,
             start_watching
@@ -40,4 +38,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn get_wayland_handles(app: &tauri::AppHandle) -> Option<WaylandHandles> {
+    let window = app.get_webview_window("main")?;
+
+    let mut surface_ptr = None;
+    let mut display_ptr = None;
+
+    if let Ok(handle) = window.window_handle() {
+        if let RawWindowHandle::Wayland(wayland_handle) = handle.as_raw() {
+            surface_ptr = Some(wayland_handle.surface.as_ptr() as *mut _);
+        }
+    }
+
+    if let Ok(handle) = window.display_handle() {
+        if let RawDisplayHandle::Wayland(wayland_display) = handle.as_raw() {
+            display_ptr = Some(wayland_display.display.as_ptr() as *mut _);
+        }
+    }
+
+    match (surface_ptr, display_ptr) {
+        (Some(surface_ptr), Some(display_ptr)) => Some(WaylandHandles {
+            surface_ptr,
+            display_ptr,
+        }),
+        _ => None,
+    }
 }

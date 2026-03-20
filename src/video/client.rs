@@ -1,14 +1,9 @@
+use crate::network::streaming_events_client::StreamingEventSocketClient;
 use gstreamer::prelude::*;
 use gstreamer::{self as gst};
 use tracing::{error, info, warn};
 
-pub fn client_fun() -> String {
-    String::from("CLIENT answer")
-}
-
 pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
-    gst::init()?;
-
     // let pipeline_description = "\
     //     udpsrc port=5000 buffer-size=2097152 ! \
     //     application/x-rtp, \
@@ -97,28 +92,34 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
 
     let bus = pipeline.bus().unwrap();
 
+    let tcp_address = String::from("127.0.0.1:8010");
+    let mut socket =
+        StreamingEventSocketClient::connect(&tcp_address).expect("Could not create the tcp socket");
+
     pipeline.set_state(gst::State::Playing)?;
     info!("Receiver online. Listening on port 5000...");
 
-    // TODO add a separate tcp socket to send control packets, specifically the stop streaming packet to notify the client.
-    let mut last_activity = std::time::Instant::now();
-
+    let mut should_break = false;
     loop {
-        // if last_activity.elapsed().as_secs() >= 6 {
-        //     info!("No data received for 3 seconds, assuming stream ended.");
-        //     break;
-        // }
+        match socket.read_event() {
+            Ok(val) => {
+                info!("Received {:?}, from tcp socket", val);
+                should_break = true;
+            }
+            Err(e) => warn!("Received err: {:?}, from tcp socket", e),
+        }
+
         if let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) {
-            last_activity = std::time::Instant::now();
+            //last_activity = std::time::Instant::now();
 
             match msg.view() {
                 gst::MessageView::Eos(..) => {
                     info!("Eos received, stopping the stream!");
-                    break;
+                    should_break = true;
                 }
                 gst::MessageView::Error(_err) => {
                     error!("Error case");
-                    break;
+                    should_break = true;
                 }
                 gst::MessageView::Warning(w) => {
                     warn!("{:?}", w);
@@ -141,8 +142,25 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
                 _ => {}
             }
         }
+
+        if should_break {
+            break;
+        }
     }
 
+    pipeline.send_event(gst::event::Eos::new());
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    pipeline.set_state(gst::State::Paused)?;
+    let _ = pipeline.state(gst::ClockTime::from_seconds(2));
+    pipeline.set_state(gst::State::Ready)?;
+    let _ = pipeline.state(gst::ClockTime::from_seconds(2));
     pipeline.set_state(gst::State::Null)?;
+    let _ = pipeline.state(gst::ClockTime::from_seconds(5));
+
+    drop(bus);
+    drop(pipeline);
+
+    info!("Quitting client receive loop");
     Ok(())
 }

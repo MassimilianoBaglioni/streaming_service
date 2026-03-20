@@ -161,8 +161,8 @@ pub fn main() -> Result<(), pw::Error> {
             Fraction,
             // Preferred fps 25, expressed as a fraction 25 / 1
             pw::spa::utils::Fraction { num: 25, denom: 1 },
-            // Min fps accepted 0
-            pw::spa::utils::Fraction { num: 0, denom: 1 },
+            // Min fps accepted 1 (changed from 0 to fix GstIntRange validation)
+            pw::spa::utils::Fraction { num: 1, denom: 1 },
             // Max fps accepted 1000
             pw::spa::utils::Fraction {
                 num: 1000,
