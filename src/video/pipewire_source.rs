@@ -5,7 +5,11 @@ use std::thread::JoinHandle;
 
 use super::video_source::VideoSource;
 use ashpd::WindowIdentifier;
-use ashpd::desktop::screencast::{Screencast, SourceType};
+use ashpd::desktop::PersistMode;
+use ashpd::desktop::screencast::{
+    CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions,
+};
+use gstreamer::glib::source;
 use pipewire::spa;
 use std::sync::atomic::Ordering::Relaxed;
 use tracing::{error, info, warn};
@@ -49,6 +53,7 @@ impl VideoSource for PipewireSource {
         self.stop_streaming_flag.store(false, Relaxed);
         self.entry_point_gstreamer();
     }
+
     fn stop_streaming(&mut self) {
         info!("Stop streaming video source called");
 
@@ -89,25 +94,31 @@ impl PipewireSource {
         let screencast = Screencast::new().await.expect("Failed screencast");
         info!("Post screencast");
 
-        let session = screencast.create_session().await.expect("Failed session");
+        let session = screencast
+            .create_session(Default::default())
+            .await
+            .expect("Failed session");
         info!("Post session");
 
+        let sources_options = SelectSourcesOptions::default()
+            .set_cursor_mode(CursorMode::Embedded)
+            .set_multiple(false)
+            .set_sources(SourceType::Monitor | SourceType::Window)
+            .set_persist_mode(PersistMode::Application);
+
         screencast
-            .select_sources(
-                &session,
-                ashpd::desktop::screencast::CursorMode::Hidden,
-                SourceType::Monitor | SourceType::Window,
-                false,
-                None,
-                ashpd::desktop::PersistMode::Application,
-            )
+            .select_sources(&session, sources_options)
             .await
             .expect("Failed on select screencast select sources");
         info!("Post select sources");
 
         // TODO an application can only attempt start a session once.
         let response = screencast
-            .start(&session, Some(&window_identifier))
+            .start(
+                &session,
+                Some(&window_identifier),
+                StartCastOptions::default(),
+            )
             .await
             .expect("Failed on screencast start");
         info!("Post response");
