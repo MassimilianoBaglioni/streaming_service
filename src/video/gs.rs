@@ -91,7 +91,7 @@ pub fn start_screen_stream(
      queue max-size-time=500000000 leaky=downstream ! \
      videoconvert ! \
      video/x-raw,format=NV12 ! \
-     vah264enc bitrate=15000000 rate-control=cbr key-int-max=90 ! \
+     vah264enc bitrate=15000 rate-control=cbr key-int-max=90 ! \
      video/x-h264,profile=high ! \
      h264parse ! \
      rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
@@ -138,7 +138,6 @@ pub fn start_screen_stream(
     info!("Streaming to {}:{}", host, port);
 
     let mut last_print = std::time::Instant::now();
-    let mut iteration_count = 0u64;
 
     loop {
         if stop_streaming_flag.load(Ordering::Relaxed) {
@@ -194,8 +193,6 @@ pub fn start_screen_stream(
 
         // Print stats every 2 seconds
         if last_print.elapsed().as_secs() >= 2 {
-            iteration_count += 1;
-
             // Get stats safely
             if let Some(udpsink) = pipeline.by_name("udpsink0") {
                 // Try different properties that might be available
@@ -217,9 +214,10 @@ pub fn start_screen_stream(
     }
 
     info!("Stopping pipeline");
-    pipeline.send_event(gst::event::Eos::new());
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    pipeline.set_state(gst::State::Paused)?;
+    let _ = pipeline.state(gst::ClockTime::from_seconds(5));
     pipeline.set_state(gst::State::Null)?;
+    let _ = pipeline.state(gst::ClockTime::from_seconds(5));
     info!("Pipeline stopped cleanly");
     Ok(())
 }
