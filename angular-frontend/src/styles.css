@@ -1,42 +1,69 @@
-/* You can add global styles to this file, and also import other style files */
 @import 'tailwindcss';
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500&display=swap');
 
-@theme {
-  /* Catppuccin Mocha - Color Palette */
-  --color-rosewater: #f5e0dc;
-  --color-flamingo: #f2cdcd;
-  --color-pink: #f5c2e7;
-  --color-mauve: #cba6f7;
-  --color-red: #f38ba8;
-  --color-maroon: #eba0ac;
-  --color-peach: #fab387;
-  --color-yellow: #f9e2af;
-  --color-green: #a6e3a1;
-  --color-teal: #94e2d5;
-  --color-sky: #89dceb;
-  --color-sapphire: #74c7ec;
-  --color-blue: #89b4fa;
-  --color-lavender: #b4befe;
-  --color-text: #cdd6f4;
-  --color-subtext1: #bac2de;
-  --color-subtext0: #a6adc8;
-  --color-overlay2: #9399b2;
-  --color-overlay1: #7f849c;
-  --color-overlay0: #6c7086;
-  --color-surface2: #585b70;
-  --color-surface1: #45475a;
-  --color-surface0: #313244;
-  --color-base: #1e1e2e;
-  --color-mantle: #181825;
-  --color-crust: #11111b;
+:root {
+  /* Backgrounds */
+  --bg0: #0c0c0f;
+  --bg1: #141418;
+  --bg2: #1c1c22;
+  --bg3: #242430;
+  --bg4: #2c2c3a;
 
-  /* Custom border radius */
-  --radius-base: 0.375rem;
+  /* Text */
+  --t1: #eeeef2;
+  --t2: #8888a0;
+  --t3: #484860;
 
-  /* Custom shadows */
-  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  /* Accent */
+  --acc: #7c6ff7;
+  --acc2: rgba(124, 111, 247, 0.14);
+  --acc3: rgba(124, 111, 247, 0.35);
+
+  /* Semantic */
+  --green: #2ecc8a;
+  --green2: rgba(46, 204, 138, 0.12);
+  --red: #e24b4a;
+  --red2: rgba(226, 75, 74, 0.12);
+  --amber: #ef9f27;
+  --amber2: rgba(239, 159, 39, 0.1);
+
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.07);
+  --border2: rgba(255, 255, 255, 0.12);
+  --border3: rgba(255, 255, 255, 0.18);
+
+  /* Radius */
+  --r4: 4px;
+  --r6: 6px;
+  --r8: 8px;
+  --r10: 10px;
+  --r12: 12px;
+
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+html,
+body,
+app-root,
+app-shell,
+app-sidebar,
+app-stream-page {
+  height: 100%;
 }
 
 body {
-  background-color: var(--color-mantle);
+  margin: 0;
+  min-height: 100%;
+  background-color: var(--bg0);
+  color: var(--t1);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* styles.css */
+router-outlet + * {
+  display: block;
 }

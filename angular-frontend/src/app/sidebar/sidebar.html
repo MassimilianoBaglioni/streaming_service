@@ -1,0 +1,26 @@
+<div class="sidebar">
+  <div class="sidebar-section">Streaming</div>
+  <a (click)="navigate('/stream')" [class.active]="isActive('/stream')" class="nav-item">Stream</a>
+  <a (click)="navigate('/event-log')" [class.active]="isActive('/event-log')" class="nav-item"
+    >Event log</a
+  >
+
+  <div class="sidebar-section">Settings</div>
+  <a
+    (click)="navigate('/video-settings')"
+    [class.active]="isActive('/video-settings')"
+    class="nav-item"
+    >Video</a
+  >
+  <a (click)="navigate('/network')" [class.active]="isActive('/network')" class="nav-item"
+    >Network</a
+  >
+  <a (click)="navigate('/capture')" [class.active]="isActive('/capture')" class="nav-item"
+    >Capture</a
+  >
+
+  <div class="nav-spacer"></div>
+  <div class="sidebar-footer">
+    <a (click)="navigate('/about')" [class.active]="isActive('/about')" class="nav-item">About</a>
+  </div>
+</div>
