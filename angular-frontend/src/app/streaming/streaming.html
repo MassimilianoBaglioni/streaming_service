@@ -1,3 +1,24 @@
-<app-button text="Stream" variant="primary" (clicked)="startStreaming()"> </app-button>
-<app-button text="Watch" variant="primary" (clicked)="startListening()"> </app-button>
-<app-button text="Stop streaming" variant="danger" (clicked)="stopStreaming()"></app-button>
+<div class="panel">
+  <div class="page-header">
+    <div class="page-title">Streaming</div>
+    <div class="page-sub">Start or stop streaming and watching sessions.</div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" [disabled]="isStreaming" (click)="startStreaming()">
+      {{ isStreaming ? 'Streaming...' : 'Start Streaming' }}
+    </button>
+
+    <button class="btn btn-primary" [disabled]="isWatching" (click)="startListening()">
+      {{ isWatching ? 'Watching...' : 'Start Watching' }}
+    </button>
+
+    <button
+      class="btn btn-danger"
+      [disabled]="!isStreaming && !isWatching"
+      (click)="stopStreaming()"
+    >
+      Stop Streaming
+    </button>
+  </div>
+</div>

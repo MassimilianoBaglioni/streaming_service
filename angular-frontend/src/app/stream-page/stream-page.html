@@ -1,47 +1,84 @@
 <div class="panel active">
   <div class="page-header">
     <div class="page-title">Stream</div>
-    <div class="page-sub">Configure your source and destination, then start streaming.</div>
+    <div class="page-sub">Stream video or watch an incoming stream.</div>
   </div>
 
-  <!-- SOURCE -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">Source</span>
+  <!-- MODE SELECTOR -->
+  <div class="mode-tabs">
+    <div class="mode-tab" [class.active]="mode === 'streaming'" (click)="setMode('streaming')">
+      <span class="tab-label">Streaming</span>
     </div>
+    <div class="mode-tab" [class.active]="mode === 'watching'" (click)="setMode('watching')">
+      <span class="tab-label">Watching</span>
+    </div>
+  </div>
 
-    <div class="source-btn">
-      <div class="source-ico"></div>
-
-      <div class="source-info">
-        <div class="source-name">No source selected</div>
-        <div class="source-meta">Click to open the screen picker</div>
+  <!-- STREAMING MODE -->
+  <ng-container *ngIf="mode === 'streaming'">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Port Configuration</span>
       </div>
 
-      <span class="source-action">Select</span>
-    </div>
-  </div>
+      <div class="two-col" [formGroup]="streamForm">
+        <div class="field">
+          <span class="field-label">TCP Socket Port</span>
+          <input class="field-input" placeholder="5000" formControlName="tcpPort" />
+        </div>
 
-  <!-- DESTINATION -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">Destination</span>
-    </div>
-
-    <div class="two-col">
-      <div class="field">
-        <span class="field-label">Receiver host</span>
-        <input class="field-input" placeholder="IP address" />
-      </div>
-
-      <div class="field">
-        <span class="field-label">Port</span>
-        <input class="field-input" placeholder="5000" />
+        <div class="field">
+          <span class="field-label">Streaming Pipeline Port</span>
+          <input class="field-input" placeholder="8000" formControlName="streamPort" />
+        </div>
       </div>
     </div>
-  </div>
 
-  <div class="btn-row">
-    <button class="btn btn-primary" disabled>Start streaming</button>
-  </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" [disabled]="!canStartStream" (click)="startStreaming()">
+        {{ isStreaming ? 'Streaming...' : 'Start Streaming' }}
+      </button>
+      <button class="btn btn-stop" [disabled]="!isStreaming" (click)="stopStreaming()">
+        Stop Streaming
+      </button>
+    </div>
+  </ng-container>
+
+  <!-- WATCHING MODE -->
+  <ng-container *ngIf="mode === 'watching'">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Streamer Configuration</span>
+      </div>
+
+      <div class="field" [formGroup]="watchForm">
+        <span class="field-label">Streamer Address</span>
+        <input class="field-input" placeholder="192.168.1.100" formControlName="streamerAddress" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Port Configuration</span>
+      </div>
+
+      <div class="two-col" [formGroup]="watchForm">
+        <div class="field">
+          <span class="field-label">TCP Socket Port</span>
+          <input class="field-input" placeholder="5000" formControlName="tcpPort" />
+        </div>
+
+        <div class="field">
+          <span class="field-label">Streaming Pipeline Port</span>
+          <input class="field-input" placeholder="8000" formControlName="streamPort" />
+        </div>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" [disabled]="!canStartWatch" (click)="startWatching()">
+        {{ isWatching ? 'Watching...' : 'Start Watching' }}
+      </button>
+    </div>
+  </ng-container>
 </div>

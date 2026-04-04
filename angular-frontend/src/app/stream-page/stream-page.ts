@@ -1,6 +1,8 @@
 import { Component } from '@angular/core';
 import { ReactiveFormsModule, FormGroup, FormControl, Validators } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { callCommand } from '../utils/tauri-invoke';
+
 @Component({
   selector: 'app-stream-page',
   imports: [ReactiveFormsModule, CommonModule],
@@ -8,20 +10,66 @@ import { CommonModule } from '@angular/common';
   styleUrl: './stream-page.css',
 })
 export class StreamPage {
-  form = new FormGroup({
-    host: new FormControl('192.168.1.42', [Validators.required]),
-    port: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+  mode: 'streaming' | 'watching' = 'streaming';
+  isStreaming = false;
+  isWatching = false;
+
+  streamForm = new FormGroup({
+    tcpPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    streamPort: new FormControl('8000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
-  get canStart(): boolean {
-    return this.sourceSelected && this.form.valid;
+
+  watchForm = new FormGroup({
+    streamerAddress: new FormControl('', [Validators.required]),
+    tcpPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    streamPort: new FormControl('8000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+  });
+
+  get canStartStream(): boolean {
+    return this.streamForm.valid && !this.isStreaming;
   }
-  sourceSelected = false;
-  startStream(): void {
-    if (!this.canStart) return;
-    const { host, port } = this.form.value;
-    console.log(`Starting stream to ${host}:${port}`);
+
+  get canStartWatch(): boolean {
+    return this.watchForm.valid && !this.isWatching;
   }
-  pickSource(): void {
-    this.sourceSelected = !this.sourceSelected;
+
+  setMode(newMode: 'streaming' | 'watching'): void {
+    this.mode = newMode;
+  }
+
+  async startStreaming(): Promise<void> {
+    if (!this.canStartStream) return;
+
+    try {
+      await callCommand('start_streaming');
+      this.isStreaming = true;
+      console.log('Streaming started');
+    } catch (error) {
+      console.error('Failed to start streaming:', error);
+      this.isStreaming = false;
+    }
+  }
+
+  async stopStreaming(): Promise<void> {
+    try {
+      await callCommand('stop_streaming');
+      this.isStreaming = false;
+      console.log('Streaming stopped');
+    } catch (error) {
+      console.error('Failed to stop streaming:', error);
+    }
+  }
+
+  async startWatching(): Promise<void> {
+    if (!this.canStartWatch) return;
+
+    try {
+      await callCommand('start_watching');
+      this.isWatching = true;
+      console.log('Watching started');
+    } catch (error) {
+      console.error('Failed to start watching:', error);
+      this.isWatching = false;
+    }
   }
 }
