@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ChangeDetectorRef } from '@angular/core';
 import { ReactiveFormsModule, FormGroup, FormControl, Validators } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { callCommand } from '../utils/tauri-invoke';
@@ -13,6 +13,9 @@ export class StreamPage {
   mode: 'streaming' | 'watching' = 'streaming';
   isStreaming = false;
   isWatching = false;
+  private statusCheckInterval: any;
+
+  constructor(private cdr: ChangeDetectorRef) {}
 
   streamForm = new FormGroup({
     tcpPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
@@ -20,7 +23,7 @@ export class StreamPage {
   });
 
   watchForm = new FormGroup({
-    streamerAddress: new FormControl('', [Validators.required]),
+    streamerAddress: new FormControl('192.168.1.100', [Validators.required]),
     tcpPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
     streamPort: new FormControl('8000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
@@ -43,20 +46,27 @@ export class StreamPage {
     try {
       await callCommand('start_streaming');
       this.isStreaming = true;
+      this.startStatusPolling();
+      this.cdr.markForCheck();
       console.log('Streaming started');
     } catch (error) {
       console.error('Failed to start streaming:', error);
       this.isStreaming = false;
+      this.cdr.markForCheck();
     }
   }
 
   async stopStreaming(): Promise<void> {
     try {
+      this.stopStatusPolling();
       await callCommand('stop_streaming');
       this.isStreaming = false;
+      this.isWatching = false;
+      this.cdr.markForCheck();
       console.log('Streaming stopped');
     } catch (error) {
       console.error('Failed to stop streaming:', error);
+      this.cdr.markForCheck();
     }
   }
 
@@ -66,10 +76,48 @@ export class StreamPage {
     try {
       await callCommand('start_watching');
       this.isWatching = true;
+      this.cdr.markForCheck();
       console.log('Watching started');
     } catch (error) {
       console.error('Failed to start watching:', error);
       this.isWatching = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  async stopWatching(): Promise<void> {
+    try {
+      this.stopStatusPolling();
+      this.isWatching = false;
+      this.cdr.markForCheck();
+      console.log('Watching stopped');
+    } catch (error) {
+      console.error('Failed to stop watching:', error);
+      this.cdr.markForCheck();
+    }
+  }
+
+  private startStatusPolling(): void {
+    this.stopStatusPolling(); // Clear any existing polling
+
+    this.statusCheckInterval = setInterval(async () => {
+      try {
+        // Try to call a command that would fail if streaming isn't active
+        // This is a simple way to detect if the stream is still running
+        // If the stream has stopped on the backend, the next call might fail or return an error
+        if (!this.isStreaming && !this.isWatching) {
+          this.stopStatusPolling();
+        }
+      } catch (error) {
+        console.log('Stream status check error (stream may have stopped)');
+      }
+    }, 2000); // Check every 2 seconds
+  }
+
+  private stopStatusPolling(): void {
+    if (this.statusCheckInterval) {
+      clearInterval(this.statusCheckInterval);
+      this.statusCheckInterval = null;
     }
   }
 }

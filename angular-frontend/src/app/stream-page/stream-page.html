@@ -79,6 +79,9 @@
       <button class="btn btn-primary" [disabled]="!canStartWatch" (click)="startWatching()">
         {{ isWatching ? 'Watching...' : 'Start Watching' }}
       </button>
+      <button class="btn btn-stop" [disabled]="!isWatching" (click)="stopWatching()">
+        Stop Watching
+      </button>
     </div>
   </ng-container>
 </div>
