@@ -1,13 +1,23 @@
+use std::net::IpAddr;
+
 use crate::get_wayland_handles;
 use crate::state::app_state::AppState;
 use streaming_server::video::client::receive;
 use streaming_server::video::create_video_source;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 #[tauri::command]
-pub fn start_streaming(state: tauri::State<AppState>, app: AppHandle) {
-    info!("Starting streaming");
+pub fn start_streaming(
+    state: tauri::State<AppState>,
+    app: AppHandle,
+    stream_port: String,
+    tcp_port: String,
+) {
+    info!(
+        "Starting streaming, with stream_port: {}, tcp_port: {}",
+        stream_port, tcp_port
+    );
 
     let mut video_source_lock = state.video_source.lock().unwrap();
 
@@ -36,12 +46,17 @@ pub fn stop_streaming(state: tauri::State<AppState>) {
 }
 
 #[tauri::command]
-pub fn start_watching() {
-    info!("Starting to listen");
-    std::thread::spawn(|| {
+pub fn start_watching(app: AppHandle, host_ip: String, stream_port: String, tcp_port: String) {
+    info!(
+        "Starting to listen with stream_port: {}, tcp_port: {}, host_ip: {}",
+        stream_port, tcp_port, host_ip
+    );
+    std::thread::spawn(move || {
+        // <-- move here
         match receive() {
             Ok(()) => {}
             Err(e) => error!("Client error: {:?}", e),
         };
+        app.emit("streaming-stopped", ()).unwrap();
     });
 }

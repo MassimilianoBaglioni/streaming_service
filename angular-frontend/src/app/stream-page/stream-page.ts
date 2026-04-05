@@ -46,7 +46,10 @@ export class StreamPage {
     if (!this.canStartStream) return;
 
     try {
-      await callCommand('start_streaming');
+      await callCommand('start_streaming', {
+        streamPort: this.streamForm.value.streamPort,
+        tcpPort: this.streamForm.value.tcpPort,
+      });
       this.isStreaming = true;
       this.startStatusPolling();
       this.cdr.markForCheck();
@@ -76,7 +79,11 @@ export class StreamPage {
     if (!this.canStartWatch) return;
 
     try {
-      await callCommand('start_watching');
+      await callCommand('start_watching', {
+        streamPort: this.watchForm.value.streamPort,
+        tcpPort: this.watchForm.value.tcpPort,
+        hostIp: this.watchForm.value.streamerAddress,
+      });
       this.isWatching = true;
 
       console.log('Watching started');
