@@ -2,6 +2,7 @@ import { Component, ChangeDetectorRef } from '@angular/core';
 import { ReactiveFormsModule, FormGroup, FormControl, Validators } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { callCommand } from '../utils/tauri-invoke';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
 @Component({
   selector: 'app-stream-page',
@@ -14,6 +15,7 @@ export class StreamPage {
   isStreaming = false;
   isWatching = false;
   private statusCheckInterval: any;
+  private watchUnlisten: UnlistenFn | null = null;
 
   constructor(private cdr: ChangeDetectorRef) {}
 
@@ -76,8 +78,17 @@ export class StreamPage {
     try {
       await callCommand('start_watching');
       this.isWatching = true;
-      this.cdr.markForCheck();
+
       console.log('Watching started');
+
+      this.watchUnlisten = await listen('streaming-stopped', () => {
+        this.isWatching = false;
+        this.watchUnlisten?.();
+        this.watchUnlisten = null;
+        this.cdr.markForCheck();
+      });
+
+      this.cdr.markForCheck();
     } catch (error) {
       console.error('Failed to start watching:', error);
       this.isWatching = false;
@@ -89,6 +100,10 @@ export class StreamPage {
     try {
       this.stopStatusPolling();
       this.isWatching = false;
+
+      this.watchUnlisten?.();
+      this.watchUnlisten = null;
+
       this.cdr.markForCheck();
       console.log('Watching stopped');
     } catch (error) {
