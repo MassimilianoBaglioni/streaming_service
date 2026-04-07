@@ -1,0 +1,2 @@
+[env]
+GDK_BACKEND = "x11"

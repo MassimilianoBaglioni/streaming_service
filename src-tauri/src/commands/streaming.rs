@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::Ipv4Addr;
 
 use crate::get_wayland_handles;
 use crate::state::app_state::AppState;
@@ -14,6 +14,24 @@ pub fn start_streaming(
     stream_port: String,
     tcp_port: String,
 ) {
+    let stream_port: u16 = match stream_port.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Invalid stream port {}: {}", stream_port, e);
+            // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
+            return;
+        }
+    };
+
+    let tcp_port: u16 = match tcp_port.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Invalid tcp port {}: {}", stream_port, e);
+            // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
+            return;
+        }
+    };
+
     info!(
         "Starting streaming, with stream_port: {}, tcp_port: {}",
         stream_port, tcp_port
@@ -47,13 +65,38 @@ pub fn stop_streaming(state: tauri::State<AppState>) {
 
 #[tauri::command]
 pub fn start_watching(app: AppHandle, host_ip: String, stream_port: String, tcp_port: String) {
+    let stream_port: u16 = match stream_port.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Invalid stream port {}: {}", stream_port, e);
+            // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
+            return;
+        }
+    };
+
+    let tcp_port: u16 = match tcp_port.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Invalid tcp port {}: {}", stream_port, e);
+            // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
+            return;
+        }
+    };
+
+    let host_ip: Ipv4Addr = match host_ip.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Invalid IPv4 address {}: {}", host_ip, e);
+            return;
+        }
+    };
+
     info!(
         "Starting to listen with stream_port: {}, tcp_port: {}, host_ip: {}",
         stream_port, tcp_port, host_ip
     );
     std::thread::spawn(move || {
-        // <-- move here
-        match receive() {
+        match receive(host_ip, stream_port, tcp_port) {
             Ok(()) => {}
             Err(e) => error!("Client error: {:?}", e),
         };

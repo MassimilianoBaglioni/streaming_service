@@ -1,9 +1,15 @@
+use std::net::Ipv4Addr;
+
 use crate::network::streaming_events_client::StreamingEventSocketClient;
 use gstreamer::prelude::*;
 use gstreamer::{self as gst};
 use tracing::{error, info, warn};
 
-pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
+pub fn receive(
+    host_ip: Ipv4Addr,
+    streaming_port: u16,
+    tcp_port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
     // let pipeline_description = "\
     //     udpsrc port=5000 buffer-size=2097152 ! \
     //     application/x-rtp, \
@@ -70,8 +76,9 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
     // autovideosink sync=false";
 
     // POST FIX USING VAH
-    let pipeline_description = "\
-    udpsrc port=5000 buffer-size=8388608 ! \
+    let pipeline_description = format!(
+        "\
+    udpsrc port={} buffer-size=8388608 ! \
     application/x-rtp, \
         media=(string)video, \
         clock-rate=(int)90000, \
@@ -85,19 +92,25 @@ pub fn receive() -> Result<(), Box<dyn std::error::Error>> {
     vah264dec ! \
     vapostproc ! \
     videoconvert ! \
-    autovideosink sync=false";
+    autovideosink sync=false",
+        streaming_port
+    );
+    info!("Streaming port: {}", streaming_port);
 
-    let pipeline = gst::parse::launch(pipeline_description)?;
+    let pipeline = gst::parse::launch(&pipeline_description)?;
     let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
 
     let bus = pipeline.bus().unwrap();
 
-    let tcp_address = String::from("127.0.0.1:8010");
+    // let tcp_address = String::from("127.0.0.1:8010");
+    let tcp_address = format!("{}:{}", host_ip.to_string(), tcp_port.to_string());
+    info!("Socket address: {}", tcp_address);
+
     let mut socket =
         StreamingEventSocketClient::connect(&tcp_address).expect("Could not create the tcp socket");
 
     pipeline.set_state(gst::State::Playing)?;
-    info!("Receiver online. Listening on port 5000...");
+    info!("Receiver online. Listening on port {}...", streaming_port);
 
     let mut should_break = false;
     loop {

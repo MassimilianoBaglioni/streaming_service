@@ -53,7 +53,7 @@
 
       <div class="field" [formGroup]="watchForm">
         <span class="field-label">Streamer Address</span>
-        <input class="field-input" placeholder="192.168.1.100" formControlName="streamerAddress" />
+        <input class="field-input" placeholder="127.0.0.1" formControlName="streamerAddress" />
       </div>
     </div>
 
@@ -65,12 +65,12 @@
       <div class="two-col" [formGroup]="watchForm">
         <div class="field">
           <span class="field-label">TCP Socket Port</span>
-          <input class="field-input" placeholder="5000" formControlName="tcpPort" />
+          <input class="field-input" placeholder="8010" formControlName="tcpPort" />
         </div>
 
         <div class="field">
           <span class="field-label">Streaming Pipeline Port</span>
-          <input class="field-input" placeholder="8000" formControlName="streamPort" />
+          <input class="field-input" placeholder="5000" formControlName="streamPort" />
         </div>
       </div>
     </div>

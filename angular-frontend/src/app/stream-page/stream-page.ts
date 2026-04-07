@@ -25,9 +25,9 @@ export class StreamPage {
   });
 
   watchForm = new FormGroup({
-    streamerAddress: new FormControl('192.168.1.100', [Validators.required]),
-    tcpPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
-    streamPort: new FormControl('8000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    streamerAddress: new FormControl('127.0.0.1', [Validators.required]),
+    tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
 
   get canStartStream(): boolean {
