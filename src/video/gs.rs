@@ -174,10 +174,10 @@ pub fn start_screen_stream(
                     info!("INFO: {:?}", i);
                 }
                 gst::MessageView::StateChanged(s) => {
-                    if let Some(src) = msg.src() {
-                        if *src == pipeline.clone().upcast::<gst::Object>() {
-                            info!("Pipeline state changed: {:?} -> {:?}", s.old(), s.current());
-                        }
+                    if let Some(src) = msg.src()
+                        && *src == pipeline.clone().upcast::<gst::Object>()
+                    {
+                        info!("Pipeline state changed: {:?} -> {:?}", s.old(), s.current());
                     }
                 }
                 gst::MessageView::Element(e) => {

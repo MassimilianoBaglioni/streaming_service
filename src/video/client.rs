@@ -1,9 +1,15 @@
+use std::net::Ipv4Addr;
+
 use crate::network::streaming_events_client::StreamingEventSocketClient;
 use gstreamer::prelude::*;
 use gstreamer::{self as gst};
 use tracing::{error, info, warn};
 
-pub fn receive(streaming_port: u16, tcp_port: u16) -> Result<(), Box<dyn std::error::Error>> {
+pub fn receive(
+    streaming_port: u16,
+    tcp_port: u16,
+    streamer_ip: Ipv4Addr,
+) -> Result<(), Box<dyn std::error::Error>> {
     // let pipeline_description = "\
     //     udpsrc port=5000 buffer-size=2097152 ! \
     //     application/x-rtp, \
@@ -96,7 +102,7 @@ pub fn receive(streaming_port: u16, tcp_port: u16) -> Result<(), Box<dyn std::er
 
     let bus = pipeline.bus().unwrap();
 
-    let tcp_address = format!("0.0.0.0:{}", tcp_port);
+    let tcp_address = format!("{}:{}", streamer_ip, tcp_port);
     info!("Socket address: {}", tcp_address);
 
     let mut socket =
@@ -131,10 +137,10 @@ pub fn receive(streaming_port: u16, tcp_port: u16) -> Result<(), Box<dyn std::er
                     warn!("{:?}", w);
                 }
                 gst::MessageView::StateChanged(s) => {
-                    if let Some(src) = msg.src() {
-                        if *src == pipeline.clone().upcast::<gst::Object>() {
-                            info!("Pipeline state: {:?} -> {:?}", s.old(), s.current());
-                        }
+                    if let Some(src) = msg.src()
+                        && *src == pipeline.clone().upcast::<gst::Object>()
+                    {
+                        info!("Pipeline state: {:?} -> {:?}", s.old(), s.current());
                     }
                 }
                 gst::MessageView::Element(e) => {

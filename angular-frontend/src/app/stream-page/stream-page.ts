@@ -26,6 +26,7 @@ export class StreamPage {
   });
 
   watchForm = new FormGroup({
+    streamerAddress: new FormControl('127.0.0.1', [Validators.required]),
     tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
     streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
@@ -81,8 +82,10 @@ export class StreamPage {
 
     try {
       await callCommand('start_watching', {
+        streamerAddress: this.watchForm.value.streamerAddress,
         streamPort: this.watchForm.value.streamPort,
         tcpPort: this.watchForm.value.tcpPort,
+        streamerIp: this.watchForm.value.streamerAddress,
       });
       this.isWatching = true;
 

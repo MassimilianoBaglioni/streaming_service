@@ -43,7 +43,7 @@ impl VideoSource for PipewireSource {
         // Create the server socket if it doesn't exist yet
         if self.tcp_socket.is_none() {
             self.tcp_socket = Some(
-                StreamingEventSocketServer::bind(&format!("{}:{}", self.host_ip, self.tcp_port))
+                StreamingEventSocketServer::bind(&format!("0.0.0.0:{}", self.tcp_port))
                     .expect("Failed to bind tcp socket."),
             );
         }
@@ -80,7 +80,7 @@ impl VideoSource for PipewireSource {
     }
 
     fn update_network_info(&mut self, host_ip: Ipv4Addr, streaming_port: u16, tcp_port: u16) {
-        if !self.tcp_socket.is_none() {
+        if self.tcp_socket.is_some() {
             self.tcp_socket = None;
         }
         self.host_ip = host_ip;
@@ -184,7 +184,7 @@ impl PipewireSource {
             .response()
             .expect("No streams inside response")
             .streams()
-            .get(0)
+            .first()
             .expect("Failed on node id retreival")
             .pipe_wire_node_id();
         info!("Got node_id from portal: {}", node_id);
@@ -220,8 +220,8 @@ impl PipewireSource {
         });
 
         let cloned_node_id = self.node_id.unwrap();
-        let streaming_port_clone = self.streaming_port.clone();
-        let host_ip_clone = self.host_ip.clone();
+        let streaming_port_clone = self.streaming_port;
+        let host_ip_clone = self.host_ip;
 
         // Create a thread that starts the streaming.
         let init_streaming_thread_handle = std::thread::spawn(move || {

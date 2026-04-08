@@ -59,6 +59,17 @@
   <ng-container *ngIf="mode === 'watching'">
     <div class="card">
       <div class="card-header">
+        <span class="card-title">Streamer Configuration</span>
+      </div>
+
+      <div class="field" [formGroup]="watchForm">
+        <span class="field-label">Streamer Address</span>
+        <input class="field-input" placeholder="127.0.0.1" formControlName="streamerAddress" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
         <span class="card-title">Port Configuration</span>
       </div>
 

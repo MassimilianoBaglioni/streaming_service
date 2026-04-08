@@ -35,7 +35,7 @@ pub fn start_streaming(
     let watcher_address: Ipv4Addr = match watcher_address.parse() {
         Ok(value) => value,
         Err(e) => {
-            warn!("Invalid address {}: {}", watcher_address, e);
+            warn!("Invalid watcher address {}: {}", watcher_address, e);
             return;
         }
     };
@@ -75,7 +75,7 @@ pub fn stop_streaming(state: tauri::State<AppState>) {
 }
 
 #[tauri::command]
-pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String) {
+pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String, streamer_ip: String) {
     let stream_port: u16 = match stream_port.parse() {
         Ok(value) => value,
         Err(e) => {
@@ -94,12 +94,20 @@ pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String) {
         }
     };
 
+    let streamer_ip: Ipv4Addr = match streamer_ip.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            warn!("Invalid streamer address {}: {}", streamer_ip, e);
+            return;
+        }
+    };
+
     info!(
         "Starting to listen with stream_port: {}, tcp_port: {}",
         stream_port, tcp_port
     );
     std::thread::spawn(move || {
-        match receive(stream_port, tcp_port) {
+        match receive(stream_port, tcp_port, streamer_ip) {
             Ok(()) => {}
             Err(e) => error!("Client error: {:?}", e),
         };
