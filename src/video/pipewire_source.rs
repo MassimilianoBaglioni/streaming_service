@@ -80,6 +80,9 @@ impl VideoSource for PipewireSource {
     }
 
     fn update_network_info(&mut self, host_ip: Ipv4Addr, streaming_port: u16, tcp_port: u16) {
+        if !self.tcp_socket.is_none() {
+            self.tcp_socket = None;
+        }
         self.host_ip = host_ip;
         self.streaming_port = streaming_port;
         self.tcp_port = tcp_port;

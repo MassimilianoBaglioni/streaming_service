@@ -18,6 +18,17 @@
   <ng-container *ngIf="mode === 'streaming'">
     <div class="card">
       <div class="card-header">
+        <span class="card-title">Watcher Configuration</span>
+      </div>
+
+      <div class="field" [formGroup]="streamForm">
+        <span class="field-label">Watcher Address</span>
+        <input class="field-input" placeholder="127.0.0.1" formControlName="watcherAddress" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
         <span class="card-title">Port Configuration</span>
       </div>
 
@@ -34,23 +45,6 @@
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Network Access</span>
-      </div>
-
-      <div class="network-mode" [formGroup]="streamForm">
-        <label class="radio-option">
-          <input type="radio" formControlName="networkMode" value="local" />
-          <span>Local only</span>
-        </label>
-        <label class="radio-option">
-          <input type="radio" formControlName="networkMode" value="network" />
-          <span>Accessible on network</span>
-        </label>
-      </div>
-    </div>
-
     <div class="btn-row">
       <button class="btn btn-primary" [disabled]="!canStartStream" (click)="startStreaming()">
         {{ isStreaming ? 'Streaming...' : 'Start Streaming' }}
@@ -63,17 +57,6 @@
 
   <!-- WATCHING MODE -->
   <ng-container *ngIf="mode === 'watching'">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Streamer Configuration</span>
-      </div>
-
-      <div class="field" [formGroup]="watchForm">
-        <span class="field-label">Streamer Address</span>
-        <input class="field-input" placeholder="127.0.0.1" formControlName="streamerAddress" />
-      </div>
-    </div>
-
     <div class="card">
       <div class="card-header">
         <span class="card-title">Port Configuration</span>

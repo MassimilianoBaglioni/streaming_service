@@ -1,15 +1,9 @@
-use std::net::Ipv4Addr;
-
 use crate::network::streaming_events_client::StreamingEventSocketClient;
 use gstreamer::prelude::*;
 use gstreamer::{self as gst};
 use tracing::{error, info, warn};
 
-pub fn receive(
-    host_ip: Ipv4Addr,
-    streaming_port: u16,
-    tcp_port: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn receive(streaming_port: u16, tcp_port: u16) -> Result<(), Box<dyn std::error::Error>> {
     // let pipeline_description = "\
     //     udpsrc port=5000 buffer-size=2097152 ! \
     //     application/x-rtp, \
@@ -102,8 +96,7 @@ pub fn receive(
 
     let bus = pipeline.bus().unwrap();
 
-    // let tcp_address = String::from("127.0.0.1:8010");
-    let tcp_address = format!("{}:{}", host_ip.to_string(), tcp_port.to_string());
+    let tcp_address = format!("0.0.0.0:{}", tcp_port);
     info!("Socket address: {}", tcp_address);
 
     let mut socket =

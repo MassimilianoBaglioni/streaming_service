@@ -20,13 +20,12 @@ export class StreamPage {
   constructor(private cdr: ChangeDetectorRef) {}
 
   streamForm = new FormGroup({
+    watcherAddress: new FormControl('127.0.0.1', [Validators.required]),
     tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
     streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
-    networkMode: new FormControl('local', [Validators.required]),
   });
 
   watchForm = new FormGroup({
-    streamerAddress: new FormControl('127.0.0.1', [Validators.required]),
     tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
     streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
@@ -48,9 +47,9 @@ export class StreamPage {
 
     try {
       await callCommand('start_streaming', {
+        watcherAddress: this.streamForm.value.watcherAddress,
         streamPort: this.streamForm.value.streamPort,
         tcpPort: this.streamForm.value.tcpPort,
-        hostIp: this.streamForm.value.networkMode,
       });
       this.isStreaming = true;
       this.startStatusPolling();
@@ -84,7 +83,6 @@ export class StreamPage {
       await callCommand('start_watching', {
         streamPort: this.watchForm.value.streamPort,
         tcpPort: this.watchForm.value.tcpPort,
-        hostIp: this.watchForm.value.streamerAddress,
       });
       this.isWatching = true;
 

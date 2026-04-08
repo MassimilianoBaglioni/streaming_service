@@ -84,6 +84,7 @@ pub fn start_screen_stream(
     //     node_id, host, port
     // );
 
+    warn!("Host: {}", host);
     // POST FIX USING VAH v1 with suspicious quality
     let pipeline_description = format!(
         "pipewiresrc path={} do-timestamp=true ! \
