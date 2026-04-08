@@ -27,6 +27,7 @@ pub struct PipewireSource {
     pointers: Arc<Mutex<Option<WaylandHandles>>>,
     tcp_socket: Option<StreamingEventSocketServer>,
     tcp_address: String,
+    streaming_port: u16,
     node_id: Option<u32>,
     session: Option<Session<Screencast>>,
     screencast: Option<Screencast>,
@@ -78,7 +79,7 @@ impl VideoSource for PipewireSource {
 }
 
 impl PipewireSource {
-    pub fn new(handles: WaylandHandles, addr: String) -> Self {
+    pub fn new(handles: WaylandHandles, tcp_addr: String, streaming_port: u16) -> Self {
         let rt = match Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
@@ -90,7 +91,8 @@ impl PipewireSource {
         PipewireSource {
             stop_streaming_flag: Arc::new(AtomicBool::new(false)),
             pointers: Arc::new(Mutex::new(Some(handles))),
-            tcp_address: addr.clone(),
+            tcp_address: tcp_addr.clone(),
+            streaming_port,
             // TODO this is blocking for the UI, should start in a separate thread.
             tcp_socket: None,
             session: None,
@@ -201,13 +203,18 @@ impl PipewireSource {
         });
 
         let cloned_node_id = self.node_id.unwrap();
+        let streaming_port_clone = self.streaming_port.clone();
 
         // Create a thread that starts the streaming.
         let init_streaming_thread_handle = std::thread::spawn(move || {
             info!("Streaming thread entrypoint");
 
-            if let Err(e) = gs::start_screen_stream(cloned_node_id, flag_clone, "127.0.0.1", "5000")
-            {
+            if let Err(e) = gs::start_screen_stream(
+                cloned_node_id,
+                flag_clone,
+                "127.0.0.1",
+                streaming_port_clone,
+            ) {
                 error!("Error on starting gstreamer server: {}", e);
                 panic!("Error on starting gstreamer server: {}", e);
             }

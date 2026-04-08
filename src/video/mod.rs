@@ -8,7 +8,11 @@ pub mod pipewire_source;
 pub mod utilities;
 pub mod video_source;
 
-pub fn create_video_source(handles: WaylandHandles) -> Arc<Mutex<dyn VideoSource + Send + Sync>> {
+pub fn create_video_source(
+    handles: WaylandHandles,
+    tcp_port: u16,
+    streaming_port: u16,
+) -> Arc<Mutex<dyn VideoSource + Send + Sync>> {
     #[cfg(target_os = "linux")]
     {
         use pipewire_source::PipewireSource;
@@ -17,7 +21,8 @@ pub fn create_video_source(handles: WaylandHandles) -> Arc<Mutex<dyn VideoSource
         Arc::new(Mutex::new(PipewireSource::new(
             handles,
             // TODO hard coded address
-            String::from("127.0.0.1:8010"),
+            String::from(format!("127.0.0.1:{}", tcp_port)),
+            streaming_port,
         )))
     }
 

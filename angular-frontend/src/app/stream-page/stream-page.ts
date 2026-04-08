@@ -20,8 +20,8 @@ export class StreamPage {
   constructor(private cdr: ChangeDetectorRef) {}
 
   streamForm = new FormGroup({
-    tcpPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
-    streamPort: new FormControl('8000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
 
   watchForm = new FormGroup({

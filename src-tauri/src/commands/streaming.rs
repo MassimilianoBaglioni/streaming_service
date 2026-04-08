@@ -42,7 +42,7 @@ pub fn start_streaming(
     if video_source_lock.is_none() {
         info!("Video source not initialized, initializing inside start_streaming");
         let handles = get_wayland_handles(&app).expect("Cannot find wayland handles");
-        let new_source = create_video_source(handles);
+        let new_source = create_video_source(handles, tcp_port, stream_port);
         *video_source_lock = Some(new_source);
     }
 

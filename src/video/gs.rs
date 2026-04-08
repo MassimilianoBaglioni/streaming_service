@@ -9,7 +9,7 @@ pub fn start_screen_stream(
     node_id: u32,
     stop_streaming_flag: Arc<AtomicBool>,
     host: &str,
-    port: &str,
+    port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Enable GStreamer debug output (optional, can be noisy)
     // std::env::set_var("GST_DEBUG", "3");
