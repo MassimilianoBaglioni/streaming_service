@@ -34,6 +34,23 @@
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Network Access</span>
+      </div>
+
+      <div class="network-mode" [formGroup]="streamForm">
+        <label class="radio-option">
+          <input type="radio" formControlName="networkMode" value="local" />
+          <span>Local only</span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" formControlName="networkMode" value="network" />
+          <span>Accessible on network</span>
+        </label>
+      </div>
+    </div>
+
     <div class="btn-row">
       <button class="btn btn-primary" [disabled]="!canStartStream" (click)="startStreaming()">
         {{ isStreaming ? 'Streaming...' : 'Start Streaming' }}

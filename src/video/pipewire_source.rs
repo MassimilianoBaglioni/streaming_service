@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use std::panic;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -26,7 +27,8 @@ pub struct PipewireSource {
     stop_streaming_flag: Arc<AtomicBool>,
     pointers: Arc<Mutex<Option<WaylandHandles>>>,
     tcp_socket: Option<StreamingEventSocketServer>,
-    tcp_address: String,
+    tcp_port: u16,
+    host_ip: Ipv4Addr,
     streaming_port: u16,
     node_id: Option<u32>,
     session: Option<Session<Screencast>>,
@@ -41,7 +43,7 @@ impl VideoSource for PipewireSource {
         // Create the server socket if it doesn't exist yet
         if self.tcp_socket.is_none() {
             self.tcp_socket = Some(
-                StreamingEventSocketServer::bind(&self.tcp_address)
+                StreamingEventSocketServer::bind(&format!("{}:{}", self.host_ip, self.tcp_port))
                     .expect("Failed to bind tcp socket."),
             );
         }
@@ -76,10 +78,21 @@ impl VideoSource for PipewireSource {
 
         rt.block_on(self.session_cleanup());
     }
+
+    fn update_network_info(&mut self, host_ip: Ipv4Addr, streaming_port: u16, tcp_port: u16) {
+        self.host_ip = host_ip;
+        self.streaming_port = streaming_port;
+        self.tcp_port = tcp_port;
+    }
 }
 
 impl PipewireSource {
-    pub fn new(handles: WaylandHandles, tcp_addr: String, streaming_port: u16) -> Self {
+    pub fn new(
+        handles: WaylandHandles,
+        tcp_port: u16,
+        streaming_port: u16,
+        host_ip: Ipv4Addr,
+    ) -> Self {
         let rt = match Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
@@ -91,7 +104,8 @@ impl PipewireSource {
         PipewireSource {
             stop_streaming_flag: Arc::new(AtomicBool::new(false)),
             pointers: Arc::new(Mutex::new(Some(handles))),
-            tcp_address: tcp_addr.clone(),
+            tcp_port,
+            host_ip,
             streaming_port,
             // TODO this is blocking for the UI, should start in a separate thread.
             tcp_socket: None,
@@ -204,6 +218,7 @@ impl PipewireSource {
 
         let cloned_node_id = self.node_id.unwrap();
         let streaming_port_clone = self.streaming_port.clone();
+        let host_ip_clone = self.host_ip.clone();
 
         // Create a thread that starts the streaming.
         let init_streaming_thread_handle = std::thread::spawn(move || {
@@ -212,7 +227,7 @@ impl PipewireSource {
             if let Err(e) = gs::start_screen_stream(
                 cloned_node_id,
                 flag_clone,
-                "127.0.0.1",
+                host_ip_clone,
                 streaming_port_clone,
             ) {
                 error!("Error on starting gstreamer server: {}", e);

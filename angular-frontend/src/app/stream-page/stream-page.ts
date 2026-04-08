@@ -22,6 +22,7 @@ export class StreamPage {
   streamForm = new FormGroup({
     tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
     streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
+    networkMode: new FormControl('local', [Validators.required]),
   });
 
   watchForm = new FormGroup({
@@ -49,6 +50,7 @@ export class StreamPage {
       await callCommand('start_streaming', {
         streamPort: this.streamForm.value.streamPort,
         tcpPort: this.streamForm.value.tcpPort,
+        hostIp: this.streamForm.value.networkMode,
       });
       this.isStreaming = true;
       this.startStatusPolling();

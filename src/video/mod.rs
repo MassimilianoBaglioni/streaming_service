@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    net::Ipv4Addr,
+    sync::{Arc, Mutex},
+};
 
 use crate::{video::video_source::VideoSource, wayland::wayland_handles::WaylandHandles};
 
@@ -12,6 +15,7 @@ pub fn create_video_source(
     handles: WaylandHandles,
     tcp_port: u16,
     streaming_port: u16,
+    host_ip: Ipv4Addr,
 ) -> Arc<Mutex<dyn VideoSource + Send + Sync>> {
     #[cfg(target_os = "linux")]
     {
@@ -20,9 +24,9 @@ pub fn create_video_source(
         //TODO add display server recognition, for now it just goes directly to wayland
         Arc::new(Mutex::new(PipewireSource::new(
             handles,
-            // TODO hard coded address
-            String::from(format!("127.0.0.1:{}", tcp_port)),
+            tcp_port,
             streaming_port,
+            host_ip,
         )))
     }
 

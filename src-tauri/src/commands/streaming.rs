@@ -13,12 +13,13 @@ pub fn start_streaming(
     app: AppHandle,
     stream_port: String,
     tcp_port: String,
+    host_ip: String,
 ) {
+    // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
     let stream_port: u16 = match stream_port.parse() {
         Ok(value) => value,
         Err(e) => {
             warn!("Invalid stream port {}: {}", stream_port, e);
-            // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
             return;
         }
     };
@@ -27,14 +28,22 @@ pub fn start_streaming(
         Ok(value) => value,
         Err(e) => {
             warn!("Invalid tcp port {}: {}", stream_port, e);
-            // TODO add a toast for the frontend in order to notify the user that the passed value is not correct.
             return;
         }
     };
 
+    let host_ip: Ipv4Addr = if host_ip == "local" {
+        "127.0.0.1".parse().unwrap()
+    } else if host_ip == "network" {
+        "0.0.0.0".parse().unwrap()
+    } else {
+        warn!("Wrong host ip passed: {}", host_ip);
+        return;
+    };
+
     info!(
-        "Starting streaming, with stream_port: {}, tcp_port: {}",
-        stream_port, tcp_port
+        "Starting streaming, with stream_port: {}, tcp_port: {}, host_ip: {}",
+        stream_port, tcp_port, host_ip
     );
 
     let mut video_source_lock = state.video_source.lock().unwrap();
@@ -42,7 +51,7 @@ pub fn start_streaming(
     if video_source_lock.is_none() {
         info!("Video source not initialized, initializing inside start_streaming");
         let handles = get_wayland_handles(&app).expect("Cannot find wayland handles");
-        let new_source = create_video_source(handles, tcp_port, stream_port);
+        let new_source = create_video_source(handles, tcp_port, stream_port, host_ip);
         *video_source_lock = Some(new_source);
     }
 

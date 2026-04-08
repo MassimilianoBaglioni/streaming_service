@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -8,7 +9,7 @@ use tracing::{error, info, warn};
 pub fn start_screen_stream(
     node_id: u32,
     stop_streaming_flag: Arc<AtomicBool>,
-    host: &str,
+    host: Ipv4Addr,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Enable GStreamer debug output (optional, can be noisy)
