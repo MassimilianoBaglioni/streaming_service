@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 use std::net::Ipv4Addr;
 use std::panic;
 use std::sync::atomic::AtomicBool;
