@@ -80,13 +80,13 @@ impl VideoSource for PipewireSource {
         rt.block_on(self.session_cleanup());
     }
 
-    fn update_network_info(&mut self, host_ip: Ipv4Addr, streaming_port: u16, tcp_port: u16) {
+    fn update_network_info(&mut self, net_info: NetInfo) {
         if self.tcp_socket.is_some() {
             self.tcp_socket = None;
         }
-        self.host_ip = host_ip;
-        self.streaming_port = streaming_port;
-        self.tcp_port = tcp_port;
+        self.host_ip = net_info.target_ip;
+        self.streaming_port = net_info.stream_port;
+        self.tcp_port = net_info.tcp_port;
     }
 }
 
@@ -259,4 +259,23 @@ impl PipewireSource {
         self.screencast = None;
         self.node_id = None;
     }
+}
+
+pub fn create_pipewire_video_source(
+    handles: WaylandHandles,
+    tcp_port: u16,
+    streaming_port: u16,
+    host_ip: Ipv4Addr,
+) -> Arc<Mutex<dyn VideoSource + Send + Sync>> {
+    // TODO, here we should check for the display server as well, OS only is not enough since linux can use something else than wayland and pipewire
+    use pipewire_source::PipewireSource;
+    let handles = get_wayland_handles(&app).expect("Cannot find wayland handles");
+
+    //TODO add display server recognition, for now it just goes directly to wayland
+    Arc::new(Mutex::new(PipewireSource::new(
+        handles,
+        tcp_port,
+        streaming_port,
+        host_ip,
+    )))
 }
