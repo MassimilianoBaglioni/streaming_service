@@ -6,11 +6,11 @@ use crate::network::NetInfo;
 #[cfg(target_os = "windows")]
 use crate::network::streaming_events_server::StreamingEventSocketServer;
 use crate::video::video_source::VideoSource;
-use tracing::info;
-use windows::Win32::UI::Shell::IInitializeWithWindow;
-use windows::{Graphics::Capture::GraphicsCapturePicker, Win32::Foundation::HWND, core::Interface};
+use tracing::{error, info};
+use windows::Win32::Foundation::HWND;
 
 #[cfg(target_os = "windows")]
+#[derive(Clone)]
 pub struct SafeHwnd(pub HWND);
 
 unsafe impl Send for SafeHwnd {}
@@ -36,18 +36,10 @@ impl WindowsSource {
 }
 
 impl VideoSource for WindowsSource {
-    fn start_streaming(&mut self) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        info!("Before rt block");
-        rt.block_on(async {
-            self.identify_windows()
-                .await
-                .expect("Failed to show screen picker");
-        });
-    }
+    fn start_streaming(&mut self) {}
 
     fn stop_streaming(&mut self) {
-        todo!()
+        error!("stop_streaming not implemented yet");
     }
 
     fn update_network_info(&mut self, net_info: &NetInfo) {
@@ -55,27 +47,7 @@ impl VideoSource for WindowsSource {
     }
 }
 
-impl WindowsSource {
-    async fn identify_windows(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let picker = GraphicsCapturePicker::new()?;
-        info!("Created picker");
-        unsafe {
-            picker
-                .cast::<IInitializeWithWindow>()?
-                .Initialize(self.hwnd.0)?;
-        }
-
-        info!("Picker initialized");
-
-        let async_op = picker.PickSingleItemAsync()?;
-        info!("Single item pick async called");
-
-        async_op.GetResults()?;
-
-        info!("Get result called.");
-        Ok(())
-    }
-}
+impl WindowsSource {}
 
 pub fn create_windows_video_source(
     hwnd: isize,

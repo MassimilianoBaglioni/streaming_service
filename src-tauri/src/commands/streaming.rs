@@ -17,19 +17,12 @@ pub async fn start_streaming(
 ) -> Result<(), String> {
     let net_info = NetInfo::parse_info(stream_port, tcp_port, watcher_address)
         .expect("Parsing net info from fontend error");
-    // Check if we need to show the picker BEFORE acquiring the lock
-    let needs_init = {
-        let lock = state.video_source.lock().unwrap();
-        lock.is_none()
-    }; // lock dropped here
 
-    // Do the async work with NO lock held
     #[cfg(target_os = "windows")]
-    if needs_init {
-        show_picker(app.clone()).await?;
-    }
+    let picker = show_picker(app.clone()).await.unwrap();
+    info!("Resulting picker: {:?}", picker);
 
-    // Reacquire lock after await
+    // This must stay AFTER async calls, can't lock with async functions
     let mut lock = state.video_source.lock().unwrap();
 
     if lock.is_none() {

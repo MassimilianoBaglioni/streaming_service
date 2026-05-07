@@ -1,19 +1,19 @@
 use tauri::Manager;
-use tracing::info;
+use tracing::{info, warn};
 use windows::{
-    core::Interface, Graphics::Capture::GraphicsCapturePicker,
+    core::Interface,
+    Graphics::Capture::{GraphicsCaptureItem, GraphicsCapturePicker},
     Win32::UI::Shell::IInitializeWithWindow,
 };
 use windows_future::AsyncOperationCompletedHandler;
 
-pub async fn show_picker(app: tauri::AppHandle) -> Result<(), String> {
-    // Extract as isize plain integer, no thread safety issues
+pub async fn show_picker(app: tauri::AppHandle) -> Option<GraphicsCaptureItem> {
     let hwnd_raw = app.get_webview_window("main").unwrap().hwnd().unwrap().0 as isize;
+    let (tx, rx) = std::sync::mpsc::channel();
 
     app.run_on_main_thread(move || {
         use windows::Win32::Foundation::HWND;
 
-        // Reconstruct HWND inside the closure, on the correct thread
         let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
 
         let picker = GraphicsCapturePicker::new().unwrap();
@@ -24,15 +24,27 @@ pub async fn show_picker(app: tauri::AppHandle) -> Result<(), String> {
                 .Initialize(hwnd)
                 .unwrap();
         }
-        let async_op = picker.PickSingleItemAsync().unwrap();
+
+        let async_op = picker
+            .PickSingleItemAsync()
+            .expect("Failing on pick single item async");
+
         async_op
             .SetCompleted(&AsyncOperationCompletedHandler::new(move |op, _| {
-                let item = op.unwrap().GetResults().unwrap();
-                info!("User selected: {:?}", item);
+                let item = op.unwrap().GetResults();
+
+                match item {
+                    Ok(val) => {
+                        tx.send(Some(val)).unwrap();
+                    }
+                    Err(e) => warn!("Error on get result: {:?}", e),
+                };
+
                 Ok(())
             }))
-            .unwrap();
+            .expect("Failing on set SetCompleted");
     })
     .unwrap();
-    Ok(())
+
+    rx.recv().unwrap()
 }
