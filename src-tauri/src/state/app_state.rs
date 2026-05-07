@@ -1,13 +1,14 @@
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 use std::thread::JoinHandle;
-use streaming_server::video::video_source::VideoSource;
+
+use streaming_server::video::video_source::VideoSourceKind;
 
 pub struct AppState {
     pub client_receiving_handler: Mutex<Option<JoinHandle<()>>>,
     pub stop_watching_flag: Arc<AtomicBool>,
-    pub video_source: Mutex<Option<Arc<Mutex<dyn VideoSource + Send + Sync>>>>,
+    pub video_source: Mutex<Option<Arc<Mutex<VideoSourceKind>>>>,
 }
 
 impl Default for AppState {

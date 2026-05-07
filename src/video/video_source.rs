@@ -1,7 +1,10 @@
-use crate::network::NetInfo;
+#[cfg(target_os = "linux")]
+use crate::video::linux_impl::pipewire_source::PipewireVideoSource;
 
-pub trait VideoSource: Send + Sync {
-    fn start_streaming(&mut self);
-    fn stop_streaming(&mut self);
-    fn update_network_info(&mut self, net_info: &NetInfo);
+use crate::video::windows_impl::windows_source::WindowsSource;
+pub enum VideoSourceKind {
+    #[cfg(target_os = "windows")]
+    Windows(WindowsSource),
+    #[cfg(target_os = "linux")]
+    Linux(PipewireVideoSource),
 }
