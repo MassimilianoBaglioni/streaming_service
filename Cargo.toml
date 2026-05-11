@@ -35,13 +35,11 @@ winit = { version = "0.30.12", features = ["wayland"] }
 winit = { version = "0.30.12" }
 windows-future = "0.3.2"
 windows = { version = "0.62.2", features = [
-    "Graphics_Capture",
-    "Graphics_DirectX",
-    "Graphics_DirectX_Direct3D11",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Dxgi",
-    "Win32_System_WinRT_Graphics_Capture",
-    "Win32_UI_WindowsAndMessaging",
-     "Win32_UI_Shell",
-     "Win32_System_Com"
+"Graphics_Capture",              
+"Graphics_DirectX",             
+"Graphics_DirectX_Direct3D11",   
+"Win32_Graphics_Direct3D",       
+"Win32_Graphics_Direct3D11",     
+"Win32_Graphics_Dxgi",           
+"Win32_System_WinRT_Direct3D11", 
 ] }

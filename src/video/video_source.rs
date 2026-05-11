@@ -6,5 +6,5 @@ pub enum VideoSourceKind {
     #[cfg(target_os = "windows")]
     Windows(WindowsSource),
     #[cfg(target_os = "linux")]
-    Linux(PipewireVideoSource),
+    Pipewire(PipewireVideoSource),
 }
