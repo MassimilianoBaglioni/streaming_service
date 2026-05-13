@@ -2,8 +2,9 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use gstreamer::prelude::*;
 use gstreamer::{self as gst};
+use gstreamer::{Pipeline, prelude::*};
+use gstreamer_app::AppSrc;
 use tracing::{error, info, warn};
 
 pub fn start_screen_stream(
@@ -222,4 +223,32 @@ pub fn start_screen_stream(
     let _ = pipeline.state(gst::ClockTime::from_seconds(5));
     info!("Pipeline stopped cleanly");
     Ok(())
+}
+
+pub fn create_windows_pipeline(width: u32, height: u32, host: Ipv4Addr, port: u16) -> Pipeline {
+    let pipeline_description = format!(
+        "appsrc name=src is-live=true format=time \
+     caps=video/x-raw,format=BGRA,width={},height={},framerate=60/1 ! \
+     videoconvert ! \
+     video/x-raw,format=NV12 ! \
+     mfh264enc bitrate=15000 ! \
+     video/x-h264,profile=high ! \
+     h264parse ! \
+     rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
+     udpsink host={} port={} sync=false async=false",
+        width, height, host, port
+    );
+
+    gstreamer::parse::launch(&pipeline_description)
+        .expect("Failed to create pipeline")
+        .downcast::<gstreamer::Pipeline>()
+        .expect("Failed to downcast to Pipeline")
+}
+
+pub fn create_app_src(pipeline: &Pipeline) -> AppSrc {
+    pipeline
+        .by_name("src")
+        .expect("Failed to find appsrc element")
+        .downcast::<AppSrc>()
+        .expect("Failed to downcast to AppSrc")
 }
