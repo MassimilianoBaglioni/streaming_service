@@ -4,6 +4,7 @@ use windows::Graphics::DirectX::DirectXPixelFormat;
 pub struct WindowsStreamingSettings {
     pub buffer_count: i32, // The GPU can prepare frames while the display is showing the current one, this is the number of prepared frames
     pub pixel_format: DirectXPixelFormat, // Representation of the pixels, for hdr we should use: R16G16B16A16Float
+    pub fps: u32,
 }
 
 impl Default for WindowsStreamingSettings {
@@ -11,6 +12,7 @@ impl Default for WindowsStreamingSettings {
         Self {
             buffer_count: 2,
             pixel_format: DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            fps: 30,
         }
     }
 }

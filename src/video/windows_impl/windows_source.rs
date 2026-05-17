@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{net::Ipv4Addr, ptr::null_mut};
 
 use crate::network::streaming_event::StreamingEvent;
@@ -180,119 +182,137 @@ impl WindowsSource {
 
         let app_src_clone = self.app_src.clone();
 
+        let target_frame_interval =
+            std::time::Duration::from_secs_f64(1.0 / self.windows_settings.fps as f64);
+
+        let last_frame_nanos = Arc::new(AtomicU64::new(0));
+        let last_clone = last_frame_nanos.clone();
+
         let handler = TypedEventHandler::new(
             move |sender: Ref<Direct3D11CaptureFramePool>, _args: Ref<IInspectable>| {
                 let frame_pool = sender.unwrap();
+                let Ok(frame) = frame_pool.TryGetNextFrame() else {
+                    return Ok(());
+                };
 
-                if let Ok(frame) = frame_pool.TryGetNextFrame() {
-                    let size = match frame.ContentSize() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            error!("ContentSize failed: {:?}", e);
-                            return Ok(());
-                        }
-                    };
-                    let appsrc = app_src_clone.clone();
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64;
+                let last = last_clone.load(Ordering::Relaxed);
+                let interval_nanos = target_frame_interval.as_nanos() as u64;
 
-                    // A surface is an interface to the texture stored in VRAM. The lines below copy the data from VRAM to RAM for the CPU.
-                    let surface = match frame.Surface() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            error!("Surface failed: {:?}", e);
-                            return Ok(());
-                        }
-                    };
+                if now - last < interval_nanos {
+                    info!("skipping frame");
+                    return Ok(());
+                }
+                last_clone.store(now, Ordering::Relaxed);
 
-                    let dxgi_access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
-                        Ok(a) => a,
-                        Err(e) => {
-                            error!("Cast to IDirect3DDxgiInterfaceAccess failed: {:?}", e);
-                            return Ok(());
-                        }
-                    };
-
-                    // get the capture texture as ID3D11Texture2D
-                    let capture_texture: ID3D11Texture2D =
-                        match unsafe { dxgi_access.GetInterface() } {
-                            Ok(t) => t,
-                            Err(e) => {
-                                error!("GetInterface texture failed: {:?}", e);
-                                return Ok(());
-                            }
-                        };
-
-                    // copy from GPU-only capture texture → staging texture (CPU accessible)
-                    unsafe { context.CopyResource(&staging_texture, &capture_texture) };
-
-                    // map the STAGING texture, not the capture texture
-                    let dxgi_staging: IDXGISurface = match staging_texture.cast() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            error!("Staging cast failed: {:?}", e);
-                            return Ok(());
-                        }
-                    };
-
-                    let mut mapped_rect = DXGI_MAPPED_RECT::default();
-                    if let Err(e) = unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ) } {
-                        error!("Map failed: {:?}", e);
+                let size = match frame.ContentSize() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("ContentSize failed: {:?}", e);
                         return Ok(());
                     }
+                };
+                let appsrc = app_src_clone.clone();
 
-                    let pitch = mapped_rect.Pitch as usize;
-                    let data_ptr = mapped_rect.pBits;
+                // A surface is an interface to the texture stored in VRAM. The lines below copy the data from VRAM to RAM for the CPU.
+                let surface = match frame.Surface() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Surface failed: {:?}", e);
+                        return Ok(());
+                    }
+                };
 
-                    let width = size.Width as usize;
-                    let height = size.Height as usize;
-                    let bytes_per_pixel = match pixel_format {
-                        DirectXPixelFormat::B8G8R8A8UIntNormalized => 4,
-                        DirectXPixelFormat::R16G16B16A16Float => 8,
-                        _ => panic!("Unsupported pixel format"),
-                    };
-                    let row_size = width * bytes_per_pixel;
-                    let total_size = row_size * height;
+                let dxgi_access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
+                    Ok(a) => a,
+                    Err(e) => {
+                        error!("Cast to IDirect3DDxgiInterfaceAccess failed: {:?}", e);
+                        return Ok(());
+                    }
+                };
 
-                    // Gstreamer has an intenrla buffers pooling, this is not an allocation per iteration, no optimization needed.
-                    let mut gst_buffer = gstreamer::Buffer::with_size(total_size)
-                        .expect("Failed to allocate the gstreamer buffer");
+                // get the capture texture as ID3D11Texture2D
+                let capture_texture: ID3D11Texture2D = match unsafe { dxgi_access.GetInterface() } {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("GetInterface texture failed: {:?}", e);
+                        return Ok(());
+                    }
+                };
 
-                    {
-                        let buffer_ref = gst_buffer.get_mut().unwrap();
+                // copy from GPU-only capture texture → staging texture (CPU accessible)
+                unsafe { context.CopyResource(&staging_texture, &capture_texture) };
 
-                        let timestamp = frame
-                            .SystemRelativeTime()
-                            .expect("Error on systemRelative")
-                            .Duration;
+                // map the STAGING texture, not the capture texture
+                let dxgi_staging: IDXGISurface = match staging_texture.cast() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Staging cast failed: {:?}", e);
+                        return Ok(());
+                    }
+                };
 
-                        // Set the timestamp for gstreamer, we are taking the timestamp from windows above
-                        buffer_ref
-                            .set_pts(gstreamer::ClockTime::from_nseconds(timestamp as u64 * 100));
+                let mut mapped_rect = DXGI_MAPPED_RECT::default();
+                if let Err(e) = unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ) } {
+                    error!("Map failed: {:?}", e);
+                    return Ok(());
+                }
 
-                        let mut map = buffer_ref
-                            .map_writable()
-                            .expect("Failed to map GStreamer buffer");
-                        let dst = map.as_mut_slice();
+                let pitch = mapped_rect.Pitch as usize;
+                let data_ptr = mapped_rect.pBits;
 
-                        for row in 0..height {
-                            let src_offset = row * pitch;
-                            let dst_offset = row * row_size;
-                            unsafe {
-                                std::ptr::copy_nonoverlapping(
-                                    data_ptr.add(src_offset),
-                                    dst.as_mut_ptr().add(dst_offset),
-                                    row_size,
-                                );
-                            }
+                let width = size.Width as usize;
+                let height = size.Height as usize;
+                let bytes_per_pixel = match pixel_format {
+                    DirectXPixelFormat::B8G8R8A8UIntNormalized => 4,
+                    DirectXPixelFormat::R16G16B16A16Float => 8,
+                    _ => panic!("Unsupported pixel format"),
+                };
+                let row_size = width * bytes_per_pixel;
+                let total_size = row_size * height;
+
+                // Gstreamer has an intenrla buffers pooling, this is not an allocation per iteration, no optimization needed.
+                let mut gst_buffer = gstreamer::Buffer::with_size(total_size)
+                    .expect("Failed to allocate the gstreamer buffer");
+
+                {
+                    let buffer_ref = gst_buffer.get_mut().unwrap();
+
+                    let timestamp = frame
+                        .SystemRelativeTime()
+                        .expect("Error on systemRelative")
+                        .Duration;
+
+                    // Set the timestamp for gstreamer, we are taking the timestamp from windows above
+                    buffer_ref.set_pts(gstreamer::ClockTime::from_nseconds(timestamp as u64 * 100));
+
+                    let mut map = buffer_ref
+                        .map_writable()
+                        .expect("Failed to map GStreamer buffer");
+                    let dst = map.as_mut_slice();
+
+                    for row in 0..height {
+                        let src_offset = row * pitch;
+                        let dst_offset = row * row_size;
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                data_ptr.add(src_offset),
+                                dst.as_mut_ptr().add(dst_offset),
+                                row_size,
+                            );
                         }
                     }
-
-                    unsafe { dxgi_staging.Unmap().expect("Unmap failed") };
-
-                    appsrc
-                        .unwrap()
-                        .push_buffer(gst_buffer)
-                        .expect("Failed to push buffer");
                 }
+
+                unsafe { dxgi_staging.Unmap().expect("Unmap failed") };
+
+                appsrc
+                    .unwrap()
+                    .push_buffer(gst_buffer)
+                    .expect("Failed to push buffer");
                 Ok(())
             },
         );
