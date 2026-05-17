@@ -1,5 +1,5 @@
 use tauri::Manager;
-use tracing::{info, warn};
+use tracing::warn;
 use windows::{
     core::Interface,
     Graphics::Capture::{GraphicsCaptureItem, GraphicsCapturePicker},

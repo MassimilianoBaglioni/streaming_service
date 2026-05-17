@@ -1,8 +1,7 @@
-#[cfg(target_os = "windows")]
 use std::sync::{Arc, Mutex};
 use std::{net::Ipv4Addr, ptr::null_mut};
 
-#[cfg(target_os = "windows")]
+use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_server::StreamingEventSocketServer;
 use crate::{
     network::NetInfo,
@@ -12,54 +11,34 @@ use crate::{
     },
 };
 use gstreamer::prelude::ElementExt;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use windows::{
     Foundation::TypedEventHandler,
-    Graphics::{Capture::GraphicsCaptureSession, DirectX::DirectXPixelFormat},
+    Graphics::{
+        Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession},
+        DirectX::Direct3D11::IDirect3DDevice,
+        DirectX::DirectXPixelFormat,
+    },
     Win32::{
+        Foundation::HMODULE,
         Graphics::{
-            Direct3D11::ID3D11DeviceContext,
+            Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+            Direct3D11::{
+                D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+                D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING, D3D11CreateDevice, ID3D11Device,
+                ID3D11DeviceContext, ID3D11Texture2D,
+            },
+            Dxgi::IDXGIDevice,
             Dxgi::{DXGI_MAP_READ, DXGI_MAPPED_RECT, IDXGISurface},
         },
         System::WinRT::Direct3D11::{
             CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
         },
     },
-    core::{IInspectable, Ref},
-};
-use windows::{
-    Graphics::{
-        Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem},
-        DirectX::Direct3D11::IDirect3DDevice,
-    },
-    Win32::{
-        Foundation::{HMODULE, HWND},
-        Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_HARDWARE,
-            Direct3D11::{
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice,
-                ID3D11Device,
-            },
-            Dxgi::IDXGIDevice,
-        },
-    },
-    core::Interface,
+    core::{IInspectable, Interface, Ref},
 };
 
-use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_FLAG, D3D11_CPU_ACCESS_READ, D3D11_RESOURCE_MISC_FLAG, D3D11_TEXTURE2D_DESC,
-    D3D11_USAGE_STAGING, ID3D11Texture2D,
-};
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
-
-#[cfg(target_os = "windows")]
-#[derive(Clone)]
-pub struct SafeHwnd(pub HWND);
-
-unsafe impl Send for SafeHwnd {}
-unsafe impl Sync for SafeHwnd {}
 pub struct WindowsSource {
-    hwnd: SafeHwnd,
     tcp_socket: Option<StreamingEventSocketServer>,
     tcp_port: u16,
     host_ip: Ipv4Addr,
@@ -75,14 +54,12 @@ pub struct WindowsSource {
 
 impl WindowsSource {
     pub fn new(
-        raw: isize,
         tcp_port: u16,
         streaming_port: u16,
         host_ip: Ipv4Addr,
         graphics_capture_item: Option<GraphicsCaptureItem>,
     ) -> Self {
         Self {
-            hwnd: SafeHwnd(HWND(raw as *mut std::ffi::c_void)),
             tcp_socket: None,
             tcp_port,
             streaming_port,
@@ -105,6 +82,23 @@ impl WindowsSource {
     }
 
     pub fn start_streaming(&mut self) {
+        info!("Start streaming video source called");
+        // Create the server socket if it doesn't exist yet
+        if self.tcp_socket.is_none() {
+            self.tcp_socket = Some(
+                StreamingEventSocketServer::bind(&format!("0.0.0.0:{}", self.tcp_port))
+                    .expect("Failed to bind tcp socket."),
+            );
+        }
+
+        // Accept a client (closes previous connection if any and waits for a new one)
+        self.tcp_socket
+            .as_mut()
+            .unwrap()
+            .accept()
+            .expect("Failed to accept client");
+        info!("Accepted client");
+
         let pixel_format = self.windows_settings.pixel_format.clone();
         let buffer_count = self.windows_settings.buffer_count.clone();
         let capture_item = self.graphics_capture_item.as_ref().unwrap().clone();
@@ -143,11 +137,6 @@ impl WindowsSource {
         let size = capture_item.Size().expect("Failed to get capture item");
         let width = size.Width as u32;
         let height = size.Height as u32;
-
-        use windows::Win32::Graphics::Direct3D11::{
-            D3D11_BIND_FLAG, D3D11_CPU_ACCESS_READ, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
-            ID3D11Texture2D,
-        };
 
         let staging_desc = D3D11_TEXTURE2D_DESC {
             Width: width,
@@ -196,7 +185,6 @@ impl WindowsSource {
                 let frame_pool = sender.unwrap();
 
                 if let Ok(frame) = frame_pool.TryGetNextFrame() {
-                    info!("Try get next frame");
                     let size = match frame.ContentSize() {
                         Ok(s) => s,
                         Err(e) => {
@@ -248,9 +236,8 @@ impl WindowsSource {
                     let mut mapped_rect = DXGI_MAPPED_RECT::default();
                     if let Err(e) = unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ) } {
                         error!("Map failed: {:?}", e);
-                        return Ok(()); // ← early return so we never touch null pointer
+                        return Ok(());
                     }
-                    info!("Mapped staging surface");
 
                     let pitch = mapped_rect.Pitch as usize;
                     let data_ptr = mapped_rect.pBits;
@@ -305,13 +292,12 @@ impl WindowsSource {
                         .unwrap()
                         .push_buffer(gst_buffer)
                         .expect("Failed to push buffer");
-                    info!("Pushed frame");
                 }
                 Ok(())
             },
         );
 
-        let _token = frame_pool
+        let token: i64 = frame_pool
             .FrameArrived(&handler)
             .expect("Error registering handler");
 
@@ -329,13 +315,44 @@ impl WindowsSource {
         // store to keep alive
         self.frame_pool = Some(frame_pool);
         self.graphics_capture_session = Some(session);
-        self.token = Some(_token);
+        self.token = Some(token);
 
         info!("Capture started");
     }
 
     pub fn stop_streaming(&mut self) {
-        error!("stop_streaming not implemented yet");
+        // stop capture first so no more frames arrive
+        if let Some(session) = &self.graphics_capture_session {
+            session.Close().ok();
+        }
+
+        // unregister the frame handler
+        if let (Some(pool), Some(token)) = (&self.frame_pool, self.token) {
+            pool.RemoveFrameArrived(token).ok();
+            pool.Close().ok();
+        }
+
+        // stop gstreamer pipeline
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.set_state(gstreamer::State::Null).ok();
+        }
+
+        // drop everything
+        self.graphics_capture_session = None;
+        self.frame_pool = None;
+        self.token = None;
+        self.pipeline = None;
+        self.app_src = None;
+
+        let socket = self.tcp_socket.as_mut().unwrap();
+        match socket.send_event(&StreamingEvent::End) {
+            Ok(_) => info!("Sent End event"),
+            Err(e) => warn!("Failed to send End event: {:?}", e),
+        }
+        socket.disconnect();
+        self.tcp_socket = None;
+
+        info!("Streaming stopped");
     }
 
     pub fn update_network_info(&mut self, net_info: &NetInfo) {
@@ -351,12 +368,10 @@ impl WindowsSource {
 }
 
 pub fn create_windows_video_source(
-    hwnd: isize,
     net_info: &NetInfo,
     graphics_capture_item: Option<GraphicsCaptureItem>,
 ) -> Arc<Mutex<VideoSourceKind>> {
     Arc::new(Mutex::new(VideoSourceKind::Windows(WindowsSource::new(
-        hwnd,
         net_info.tcp_port,
         net_info.stream_port,
         net_info.target_ip,

@@ -6,6 +6,8 @@ pub mod state;
 #[cfg(target_os = "windows")]
 pub mod windows_impl;
 
+pub mod client;
+
 use commands::streaming::{start_streaming, start_watching, stop_streaming};
 use state::app_state::AppState;
 use streaming_server::gstreamer as gst;

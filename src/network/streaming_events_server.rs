@@ -5,7 +5,9 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 
 pub struct StreamingEventSocketServer {
+    // Listens for incoming connections
     listener: TcpListener,
+    // Actual data incoming from connected clients
     stream: Option<TcpStream>,
 }
 

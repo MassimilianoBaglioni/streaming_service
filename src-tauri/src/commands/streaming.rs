@@ -1,11 +1,11 @@
 use crate::state::app_state::AppState;
 #[cfg(target_os = "windows")]
 use crate::windows_impl::show_picker;
-use streaming_server::video::client::receive;
+#[cfg(target_os = "windows")]
+use streaming_server::video::windows_impl::windows_client::WindowsClient;
 use streaming_server::video::windows_impl::windows_source::create_windows_video_source;
 use streaming_server::{network::NetInfo, video::video_source::VideoSourceKind};
-#[cfg(target_os = "windows")]
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
 #[tauri::command]
@@ -34,8 +34,7 @@ pub async fn start_streaming(
         }
         #[cfg(target_os = "windows")]
         {
-            let hwnd_raw = app.get_webview_window("main").unwrap().hwnd().unwrap().0 as isize;
-            let new_source = create_windows_video_source(hwnd_raw, &net_info, capture_item.clone());
+            let new_source = create_windows_video_source(&net_info, capture_item.clone());
             *lock = Some(new_source);
         }
     }
@@ -88,8 +87,15 @@ pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String, str
         "Starting to listen with stream_port: {}, tcp_port: {}",
         net_info.stream_port, net_info.tcp_port
     );
+
+    #[cfg(target_os = "windows")]
+    let client = WindowsClient::new(net_info);
+
+    #[cfg(target_os = "linux")]
+    let client = PipewireClient::new(net_info);
+
     std::thread::spawn(move || {
-        match receive(&net_info) {
+        match client.receive() {
             Ok(()) => {}
             Err(e) => error!("Client error: {:?}", e),
         };
