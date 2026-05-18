@@ -5,7 +5,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use super::video_source::VideoSource;
 use ashpd::WindowIdentifier;
 use ashpd::desktop::screencast::{
     CursorMode, Screencast, SelectSourcesOptions, SourceType, StartCastOptions,
@@ -16,10 +15,12 @@ use std::sync::atomic::Ordering::Relaxed;
 use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 
+use crate::network::NetInfo;
 use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_server::StreamingEventSocketServer;
 use crate::video::gs;
-use crate::wayland::wayland_handles::WaylandHandles;
+use crate::video::linux_impl::wayland::wayland_handles::WaylandHandles;
+use crate::video::video_source::VideoSourceKind;
 
 pub struct UserData {
     pub format: spa::param::video::VideoInfoRaw,
@@ -36,58 +37,6 @@ pub struct PipewireSource {
     screencast: Option<Screencast>,
     gstreamer_thread_handle: Option<JoinHandle<()>>,
     rt: Arc<Runtime>,
-}
-
-impl VideoSource for PipewireSource {
-    fn start_streaming(&mut self) {
-        info!("Start streaming video source called");
-        // Create the server socket if it doesn't exist yet
-        if self.tcp_socket.is_none() {
-            self.tcp_socket = Some(
-                StreamingEventSocketServer::bind(&format!("0.0.0.0:{}", self.tcp_port))
-                    .expect("Failed to bind tcp socket."),
-            );
-        }
-
-        // Accept a client (closes previous connection if any and waits for a new one)
-        self.tcp_socket
-            .as_mut()
-            .unwrap()
-            .accept()
-            .expect("Failed to accept client");
-        info!("Accepted client");
-        self.stop_streaming_flag.store(false, Relaxed);
-        self.gstreamer_thread_handle = Some(self.entry_point_gstreamer());
-    }
-
-    fn stop_streaming(&mut self) {
-        info!("Stop streaming video source called");
-
-        self.stop_streaming_flag.store(true, Relaxed);
-
-        let socket = self.tcp_socket.as_mut().unwrap();
-        match socket.send_event(&StreamingEvent::End) {
-            Ok(_) => info!("Sent End event"),
-            Err(e) => warn!("Failed to send End event: {:?}", e),
-        }
-        socket.disconnect();
-
-        if let Some(handle) = self.gstreamer_thread_handle.take() {
-            handle.join().expect("Failed to await the gs thread.");
-        }
-        let rt = Arc::clone(&self.rt);
-
-        rt.block_on(self.session_cleanup());
-    }
-
-    fn update_network_info(&mut self, net_info: NetInfo) {
-        if self.tcp_socket.is_some() {
-            self.tcp_socket = None;
-        }
-        self.host_ip = net_info.target_ip;
-        self.streaming_port = net_info.stream_port;
-        self.tcp_port = net_info.tcp_port;
-    }
 }
 
 impl PipewireSource {
@@ -119,6 +68,56 @@ impl PipewireSource {
             gstreamer_thread_handle: None,
             rt: Arc::new(rt),
         }
+    }
+
+    pub fn start_streaming(&mut self) {
+        info!("Start streaming video source called");
+        // Create the server socket if it doesn't exist yet
+        if self.tcp_socket.is_none() {
+            self.tcp_socket = Some(
+                StreamingEventSocketServer::bind(&format!("0.0.0.0:{}", self.tcp_port))
+                    .expect("Failed to bind tcp socket."),
+            );
+        }
+
+        // Accept a client (closes previous connection if any and waits for a new one)
+        self.tcp_socket
+            .as_mut()
+            .unwrap()
+            .accept()
+            .expect("Failed to accept client");
+        info!("Accepted client");
+        self.stop_streaming_flag.store(false, Relaxed);
+        self.gstreamer_thread_handle = Some(self.entry_point_gstreamer());
+    }
+
+    pub fn stop_streaming(&mut self) {
+        info!("Stop streaming video source called");
+
+        self.stop_streaming_flag.store(true, Relaxed);
+
+        let socket = self.tcp_socket.as_mut().unwrap();
+        match socket.send_event(&StreamingEvent::End) {
+            Ok(_) => info!("Sent End event"),
+            Err(e) => warn!("Failed to send End event: {:?}", e),
+        }
+        socket.disconnect();
+
+        if let Some(handle) = self.gstreamer_thread_handle.take() {
+            handle.join().expect("Failed to await the gs thread.");
+        }
+        let rt = Arc::clone(&self.rt);
+
+        rt.block_on(self.session_cleanup());
+    }
+
+    pub fn update_network_info(&mut self, net_info: &NetInfo) {
+        if self.tcp_socket.is_some() {
+            self.tcp_socket = None;
+        }
+        self.host_ip = net_info.target_ip;
+        self.streaming_port = net_info.stream_port;
+        self.tcp_port = net_info.tcp_port;
     }
 
     /// Allows the user to pick a screen for the streaming. Returns the node of the created streaming node.
@@ -213,12 +212,16 @@ impl PipewireSource {
 
         let rt = Arc::clone(&self.rt);
 
+        info!("Pre block on");
+
         rt.block_on(async {
             info!("Pre identify windows");
             self.identify_windows(handles.display_ptr, handles.surface_ptr)
                 .await;
             info!("Post identify windows");
         });
+
+        info!("Post block on");
 
         let cloned_node_id = self.node_id.unwrap();
         let streaming_port_clone = self.streaming_port;
@@ -263,19 +266,13 @@ impl PipewireSource {
 
 pub fn create_pipewire_video_source(
     handles: WaylandHandles,
-    tcp_port: u16,
-    streaming_port: u16,
-    host_ip: Ipv4Addr,
-) -> Arc<Mutex<dyn VideoSource + Send + Sync>> {
-    // TODO, here we should check for the display server as well, OS only is not enough since linux can use something else than wayland and pipewire
-    use pipewire_source::PipewireSource;
-    let handles = get_wayland_handles(&app).expect("Cannot find wayland handles");
-
-    //TODO add display server recognition, for now it just goes directly to wayland
-    Arc::new(Mutex::new(PipewireSource::new(
+    net_info: &NetInfo,
+) -> Arc<Mutex<VideoSourceKind>> {
+    //TODO add display server recognition, for now it just goes directly to wayland for linux
+    Arc::new(Mutex::new(VideoSourceKind::Pipewire(PipewireSource::new(
         handles,
-        tcp_port,
-        streaming_port,
-        host_ip,
-    )))
+        net_info.tcp_port,
+        net_info.stream_port,
+        net_info.target_ip,
+    ))))
 }

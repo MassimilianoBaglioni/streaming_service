@@ -2,7 +2,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use streaming_server::video::linux_impl::wayland::wayland_handles::WaylandHandles;
 use tauri::Manager;
 
-fn get_wayland_handles(app: &tauri::AppHandle) -> Option<WaylandHandles> {
+pub fn get_wayland_handles(app: &tauri::AppHandle) -> Option<WaylandHandles> {
     let window = app.get_webview_window("main")?;
 
     let mut surface_ptr = None;

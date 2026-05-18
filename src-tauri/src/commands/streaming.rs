@@ -1,15 +1,20 @@
 use crate::state::app_state::AppState;
-#[cfg(target_os = "windows")]
-use crate::windows_impl::show_picker;
-#[cfg(target_os = "windows")]
-use streaming_server::video::windows_impl::windows_client::WindowsClient;
-use streaming_server::video::windows_impl::windows_source::create_windows_video_source;
 use streaming_server::{network::NetInfo, video::video_source::VideoSourceKind};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
+#[cfg(target_os = "windows")]
+use {
+    crate::windows_impl::show_picker,
+    streaming_server::video::windows_impl::{
+        windows_client::WindowsClient, windows_source::create_windows_video_source,
+    },
+};
+
+#[cfg(target_os = "linux")]
+use streaming_server::video::linux_impl::pipewire_client::PipewireClient;
 
 #[tauri::command]
-pub async fn start_streaming(
+pub fn start_streaming(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
     stream_port: String,
@@ -20,7 +25,7 @@ pub async fn start_streaming(
         .expect("Parsing net info from fontend error");
 
     #[cfg(target_os = "windows")]
-    let capture_item = show_picker(app.clone()).await;
+    let capture_item = tokio::runtime::Handle::current().block_on(show_picker(app.clone()));
 
     // This must stay AFTER async calls, can't lock with async functions
     let mut lock = state.video_source.lock().unwrap();
@@ -29,6 +34,11 @@ pub async fn start_streaming(
         info!("Video source not initialized, initializing inside start_streaming");
         #[cfg(target_os = "linux")]
         {
+            use crate::linux_impl::get_wayland_handles;
+            use streaming_server::video::linux_impl::pipewire_source::create_pipewire_video_source;
+
+            let handles = get_wayland_handles(&app).expect("Failed to retrieve wayland handles.");
+
             let new_source = create_pipewire_video_source(handles, &net_info);
             *lock = Some(new_source);
         }
@@ -50,7 +60,10 @@ pub async fn start_streaming(
                 windows_source.start_streaming();
             }
             #[cfg(target_os = "linux")]
-            VideoSourceKind::Pipewire(pipewire_source) => {}
+            VideoSourceKind::Pipewire(pipewire_source) => {
+                pipewire_source.update_network_info(&net_info);
+                pipewire_source.start_streaming();
+            }
         }
     }
 
