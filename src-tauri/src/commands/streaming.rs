@@ -65,7 +65,6 @@ pub async fn start_streaming(
     let net_info = NetInfo::parse_info(stream_port, tcp_port, watcher_address)
         .expect("Parsing net info from fontend error");
 
-    #[cfg(target_os = "windows")]
     let capture_item = show_picker(app.clone()).await;
 
     // This must stay AFTER async calls, can't lock with async functions
@@ -73,37 +72,19 @@ pub async fn start_streaming(
 
     if lock.is_none() {
         info!("Video source not initialized, initializing inside start_streaming");
-        #[cfg(target_os = "linux")]
-        {
-            use crate::linux_impl::get_wayland_handles;
-            use streaming_server::video::linux_impl::pipewire_source::create_pipewire_video_source;
 
-            let handles = get_wayland_handles(&app).expect("Failed to retrieve wayland handles.");
-
-            let new_source = create_pipewire_video_source(handles, &net_info);
-            *lock = Some(new_source);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let new_source = create_windows_video_source(&net_info, capture_item.clone());
-            *lock = Some(new_source);
-        }
+        let new_source = create_windows_video_source(&net_info, capture_item.clone());
+        *lock = Some(new_source);
     }
 
     if let Some(video_source) = lock.as_ref() {
         info!("Video source already initialized, starting stream");
         let mut vs = video_source.lock().unwrap();
         match &mut *vs {
-            #[cfg(target_os = "windows")]
             VideoSourceKind::Windows(windows_source) => {
                 windows_source.set_graphics_capture_item(capture_item.clone());
                 windows_source.update_network_info(&net_info);
                 windows_source.start_streaming();
-            }
-            #[cfg(target_os = "linux")]
-            VideoSourceKind::Pipewire(pipewire_source) => {
-                pipewire_source.update_network_info(&net_info);
-                pipewire_source.start_streaming();
             }
         }
     }
