@@ -11,8 +11,49 @@ use {
 };
 
 #[cfg(target_os = "linux")]
-use streaming_server::video::linux_impl::pipewire_client::PipewireClient;
+use {
+    crate::linux_impl::get_wayland_handles,
+    streaming_server::video::linux_impl::pipewire_client::PipewireClient,
+};
 
+#[cfg(target_os = "linux")]
+#[tauri::command]
+pub fn start_streaming(
+    state: tauri::State<AppState>,
+    app: AppHandle,
+    stream_port: String,
+    tcp_port: String,
+    watcher_address: String,
+) {
+    let net_info = NetInfo::parse_info(stream_port, tcp_port, watcher_address)
+        .expect("Parsing net info from fontend error");
+
+    // This must stay AFTER async calls, can't lock with async functions
+    let mut lock = state.video_source.lock().unwrap();
+
+    if lock.is_none() {
+        info!("Video source not initialized, initializing inside start_streaming");
+        use streaming_server::video::linux_impl::pipewire_source::create_pipewire_video_source;
+
+        let handles = get_wayland_handles(&app).expect("Failed to retrieve wayland handles.");
+
+        let new_source = create_pipewire_video_source(handles, &net_info);
+        *lock = Some(new_source);
+    }
+
+    if let Some(video_source) = lock.as_ref() {
+        info!("Video source already initialized, starting stream");
+        let mut vs = video_source.lock().unwrap();
+        match &mut *vs {
+            VideoSourceKind::Pipewire(pipewire_source) => {
+                pipewire_source.update_network_info(&net_info);
+                pipewire_source.start_streaming();
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn start_streaming(
     state: tauri::State<'_, AppState>,
