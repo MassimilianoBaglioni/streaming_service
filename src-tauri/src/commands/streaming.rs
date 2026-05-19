@@ -55,7 +55,7 @@ pub fn start_streaming(
 
 #[cfg(target_os = "windows")]
 #[tauri::command]
-pub fn start_streaming(
+pub async fn start_streaming(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
     stream_port: String,
@@ -66,7 +66,7 @@ pub fn start_streaming(
         .expect("Parsing net info from fontend error");
 
     #[cfg(target_os = "windows")]
-    let capture_item = tokio::runtime::Handle::current().block_on(show_picker(app.clone()));
+    let capture_item = show_picker(app.clone()).await;
 
     // This must stay AFTER async calls, can't lock with async functions
     let mut lock = state.video_source.lock().unwrap();
