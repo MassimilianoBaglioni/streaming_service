@@ -132,7 +132,19 @@ pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String, str
     std::thread::spawn(move || {
         match client.receive() {
             Ok(()) => {}
-            Err(e) => error!("Client error: {:?}", e),
+            Err(e) => {
+                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                    if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
+                        app.emit("server-not-streaming", ()).unwrap();
+                    } else {
+                        error!("Client error: {:?}", e);
+                        app.emit("streaming-stopped", ()).unwrap();
+                    }
+                } else {
+                    error!("Client error: {:?}", e);
+                    app.emit("streaming-stopped", ()).unwrap();
+                }
+            }
         };
         app.emit("streaming-stopped", ()).unwrap();
     });

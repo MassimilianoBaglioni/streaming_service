@@ -19,6 +19,11 @@ impl WindowsClient {
         let streamer_ip = self.net_info.target_ip;
         let tcp_port = self.net_info.tcp_port;
 
+        let tcp_address = format!("{}:{}", streamer_ip, tcp_port);
+        info!("Socket address: {}", tcp_address);
+
+        let mut socket = StreamingEventSocketClient::connect(&tcp_address)?;
+
         let pipeline_description = format!(
             "\
             udpsrc port={} buffer-size=8388608 ! \
@@ -38,12 +43,6 @@ impl WindowsClient {
         let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
 
         let bus = pipeline.bus().unwrap();
-
-        let tcp_address = format!("{}:{}", streamer_ip, tcp_port);
-        info!("Socket address: {}", tcp_address);
-
-        let mut socket = StreamingEventSocketClient::connect(&tcp_address)
-            .expect("Could not create the tcp socket");
 
         pipeline.set_state(gst::State::Playing)?;
         info!("Receiver online. Listening on port {}...", streaming_port);

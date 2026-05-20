@@ -1,0 +1,10 @@
+<div class="toast-container">
+  <div
+    *ngFor="let toast of toasts"
+    [ngClass]="getToastClass(toast.type)"
+    [@slideUp]="'in'"
+    class="toast"
+  >
+    {{ toast.message }}
+  </div>
+</div>

@@ -3,6 +3,7 @@ import { ReactiveFormsModule, FormGroup, FormControl, Validators } from '@angula
 import { CommonModule } from '@angular/common';
 import { callCommand } from '../utils/tauri-invoke';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { ToastService } from '../services/toast.service';
 
 @Component({
   selector: 'app-stream-page',
@@ -15,9 +16,13 @@ export class StreamPage {
   isStreaming = false;
   isWatching = false;
   private statusCheckInterval: any;
-  private watchUnlisten: UnlistenFn | null = null;
+  private serverNotStreamingUnlisten: UnlistenFn | null = null;
+  private streamingStoppedUnlisten: UnlistenFn | null = null;
 
-  constructor(private cdr: ChangeDetectorRef) {}
+  constructor(
+    private cdr: ChangeDetectorRef,
+    private toastService: ToastService,
+  ) {}
 
   streamForm = new FormGroup({
     watcherAddress: new FormControl('127.0.0.1', [Validators.required]),
@@ -81,6 +86,9 @@ export class StreamPage {
     if (!this.canStartWatch) return;
 
     try {
+      // Clean up old listeners before creating new ones
+      this.cleanupWatchListeners();
+
       await callCommand('start_watching', {
         streamerAddress: this.watchForm.value.streamerAddress,
         streamPort: this.watchForm.value.streamPort,
@@ -91,10 +99,14 @@ export class StreamPage {
 
       console.log('Watching started');
 
-      this.watchUnlisten = await listen('streaming-stopped', () => {
+      this.serverNotStreamingUnlisten = await listen('server-not-streaming', () => {
+        this.toastService.show('Server is not streaming', 'danger');
+        this.cdr.markForCheck();
+      });
+
+      this.streamingStoppedUnlisten = await listen('streaming-stopped', () => {
         this.isWatching = false;
-        this.watchUnlisten?.();
-        this.watchUnlisten = null;
+        this.cleanupWatchListeners();
         this.cdr.markForCheck();
       });
 
@@ -109,16 +121,24 @@ export class StreamPage {
   async stopWatching(): Promise<void> {
     try {
       this.stopStatusPolling();
-      this.isWatching = false;
-
-      this.watchUnlisten?.();
-      this.watchUnlisten = null;
+      this.cleanupWatchListeners();
 
       this.cdr.markForCheck();
       console.log('Watching stopped');
     } catch (error) {
       console.error('Failed to stop watching:', error);
       this.cdr.markForCheck();
+    }
+  }
+
+  private cleanupWatchListeners(): void {
+    if (this.serverNotStreamingUnlisten) {
+      this.serverNotStreamingUnlisten();
+      this.serverNotStreamingUnlisten = null;
+    }
+    if (this.streamingStoppedUnlisten) {
+      this.streamingStoppedUnlisten();
+      this.streamingStoppedUnlisten = null;
     }
   }
 

@@ -203,7 +203,6 @@ impl WindowsSource {
                 let interval_nanos = target_frame_interval.as_nanos() as u64;
 
                 if now - last < interval_nanos {
-                    info!("skipping frame");
                     return Ok(());
                 }
                 last_clone.store(now, Ordering::Relaxed);
