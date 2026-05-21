@@ -1,12 +1,19 @@
+use std::sync::mpsc::channel;
+
 use crate::state::app_state::AppState;
-use streaming_server::{network::NetInfo, video::video_source::VideoSourceKind};
+use streaming_server::{
+    network::NetInfo,
+    video::{
+        video_source::VideoSourceKind, windows_impl::client::windows_client::StopWatchingEvent,
+    },
+};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 #[cfg(target_os = "windows")]
 use {
     crate::windows_impl::show_picker,
     streaming_server::video::windows_impl::{
-        windows_client::WindowsClient, windows_source::create_windows_video_source,
+        client::windows_client::WindowsClient, windows_source::create_windows_video_source,
     },
 };
 
@@ -114,7 +121,13 @@ pub fn stop_streaming(state: tauri::State<AppState>) {
 }
 
 #[tauri::command]
-pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String, streamer_ip: String) {
+pub fn start_watching(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    stream_port: String,
+    tcp_port: String,
+    streamer_ip: String,
+) {
     let net_info = NetInfo::parse_info(stream_port, tcp_port, streamer_ip)
         .expect("Parsing net info from fontend error");
 
@@ -123,8 +136,12 @@ pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String, str
         net_info.stream_port, net_info.tcp_port
     );
 
+    let (sender, receiver) = channel::<StopWatchingEvent>();
+
+    *state.stop_watching_sender.lock().unwrap() = Some(sender.clone());
+
     #[cfg(target_os = "windows")]
-    let client = WindowsClient::new(net_info);
+    let client = WindowsClient::new(net_info, sender, receiver);
 
     #[cfg(target_os = "linux")]
     let client = PipewireClient::new(net_info);
@@ -148,4 +165,14 @@ pub fn start_watching(app: AppHandle, stream_port: String, tcp_port: String, str
         };
         app.emit("streaming-stopped", ()).unwrap();
     });
+}
+
+#[tauri::command]
+pub fn stop_watching(state: tauri::State<AppState>) {
+    if let Some(sender) = state.stop_watching_sender.lock().unwrap().as_ref() {
+        sender
+            .send(StopWatchingEvent::ClientStop)
+            .expect("Failed to send client stop event");
+    }
+    info!("Called stop watching");
 }

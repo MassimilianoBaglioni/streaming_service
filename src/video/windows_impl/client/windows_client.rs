@@ -1,3 +1,6 @@
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
+
 use crate::network::NetInfo;
 use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_client::StreamingEventSocketClient;
@@ -5,13 +8,29 @@ use gstreamer::prelude::*;
 use gstreamer::{self as gst};
 use tracing::{error, info, warn};
 
+pub enum StopWatchingEvent {
+    ClientStop,
+    StreamEnded,
+    GenericError,
+}
+
 pub struct WindowsClient {
     net_info: NetInfo,
+    events_sender: Sender<StopWatchingEvent>,
+    events_receiver: Receiver<StopWatchingEvent>,
 }
 
 impl WindowsClient {
-    pub fn new(net_info: NetInfo) -> Self {
-        Self { net_info }
+    pub fn new(
+        net_info: NetInfo,
+        events_sender: Sender<StopWatchingEvent>,
+        events_receiver: Receiver<StopWatchingEvent>,
+    ) -> Self {
+        Self {
+            net_info,
+            events_sender,
+            events_receiver,
+        }
     }
 
     pub fn receive(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -47,15 +66,46 @@ impl WindowsClient {
         pipeline.set_state(gst::State::Playing)?;
         info!("Receiver online. Listening on port {}...", streaming_port);
 
-        let mut should_break = false;
+        let mut should_break;
+
+        let socket_sender_clone = self.events_sender.clone();
+
+        // Thread checking for socket events that can stop the stream
+        // Spawn it before the loop to avoid ownership issues
+        thread::spawn(move || match socket.read_event() {
+            Ok(StreamingEvent::End) => {
+                info!("Received End event, from tcp socket");
+                socket_sender_clone
+                    .send(StopWatchingEvent::StreamEnded)
+                    .expect("Error on sending the event from the event socket");
+            }
+            Err(e) => {
+                warn!("Received err: {:?}, from tcp socket", e);
+                socket_sender_clone
+                    .send(StopWatchingEvent::GenericError)
+                    .expect("Error on sending the event from the event socket");
+            }
+        });
+
         loop {
-            match socket.read_event() {
-                Ok(StreamingEvent::End) => {
-                    info!("Received End event, from tcp socket");
+            match self
+                .events_receiver
+                .recv()
+                .expect("Failed to receive an event from recv")
+            {
+                StopWatchingEvent::ClientStop => {
+                    info!("ClientStop received, stopping client");
                     should_break = true;
                 }
-                Err(e) => warn!("Received err: {:?}, from tcp socket", e),
-            }
+                StopWatchingEvent::StreamEnded => {
+                    info!("StreamEnded received, stopping client");
+                    should_break = true;
+                }
+                StopWatchingEvent::GenericError => {
+                    info!("GenericError received, stopping client");
+                    should_break = true;
+                }
+            };
 
             if let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) {
                 //last_activity = std::time::Instant::now();

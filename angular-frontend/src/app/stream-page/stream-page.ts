@@ -15,6 +15,7 @@ export class StreamPage {
   mode: 'streaming' | 'watching' = 'streaming';
   isStreaming = false;
   isWatching = false;
+  isWaitingForWatcher = false;
   private statusCheckInterval: any;
   private serverNotStreamingUnlisten: UnlistenFn | null = null;
   private streamingStoppedUnlisten: UnlistenFn | null = null;
@@ -37,7 +38,7 @@ export class StreamPage {
   });
 
   get canStartStream(): boolean {
-    return this.streamForm.valid && !this.isStreaming;
+    return this.streamForm.valid && !this.isStreaming && !this.isWaitingForWatcher;
   }
 
   get canStartWatch(): boolean {
@@ -50,7 +51,8 @@ export class StreamPage {
 
   async startStreaming(): Promise<void> {
     if (!this.canStartStream) return;
-
+    this.isWaitingForWatcher = true;
+    this.cdr.markForCheck();
     try {
       await callCommand('start_streaming', {
         watcherAddress: this.streamForm.value.watcherAddress,
@@ -64,6 +66,7 @@ export class StreamPage {
     } catch (error) {
       console.error('Failed to start streaming:', error);
       this.isStreaming = false;
+      this.isWaitingForWatcher = false;
       this.cdr.markForCheck();
     }
   }
@@ -73,11 +76,14 @@ export class StreamPage {
       this.stopStatusPolling();
       await callCommand('stop_streaming');
       this.isStreaming = false;
+      this.isWaitingForWatcher = false;
       this.isWatching = false;
       this.cdr.markForCheck();
       console.log('Streaming stopped');
     } catch (error) {
       console.error('Failed to stop streaming:', error);
+      this.isStreaming = false;
+      this.isWaitingForWatcher = false;
       this.cdr.markForCheck();
     }
   }
@@ -120,11 +126,11 @@ export class StreamPage {
 
   async stopWatching(): Promise<void> {
     try {
+      await callCommand('stop_watching', {});
+      this.isWatching = false; // ← this is missing
       this.stopStatusPolling();
       this.cleanupWatchListeners();
-
       this.cdr.markForCheck();
-      console.log('Watching stopped');
     } catch (error) {
       console.error('Failed to stop watching:', error);
       this.cdr.markForCheck();

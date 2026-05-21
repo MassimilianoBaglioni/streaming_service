@@ -8,9 +8,10 @@ pub mod windows_impl;
 
 pub mod client;
 
-use commands::streaming::{start_streaming, start_watching, stop_streaming};
+use commands::streaming::{start_streaming, start_watching, stop_streaming, stop_watching};
 use state::app_state::AppState;
 use streaming_server::gstreamer as gst;
+use tracing::info;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -22,13 +23,15 @@ pub fn run() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
+    info!("gst path: {:?}", std::env::var("GST_PLUGIN_PATH"));
 
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             start_streaming,
             stop_streaming,
-            start_watching
+            start_watching,
+            stop_watching,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

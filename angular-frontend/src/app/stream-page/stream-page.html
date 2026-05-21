@@ -49,7 +49,11 @@
       <button class="btn btn-primary" [disabled]="!canStartStream" (click)="startStreaming()">
         {{ isStreaming ? 'Streaming...' : 'Start Streaming' }}
       </button>
-      <button class="btn btn-stop" [disabled]="!isStreaming" (click)="stopStreaming()">
+      <button
+        class="btn btn-stop"
+        [disabled]="!isStreaming && !isWaitingForWatcher"
+        (click)="stopStreaming()"
+      >
         Stop Streaming
       </button>
     </div>
