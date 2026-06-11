@@ -11,19 +11,21 @@ pub mod client;
 use commands::streaming::{start_streaming, start_watching, stop_streaming, stop_watching};
 use state::app_state::AppState;
 use streaming_server::gstreamer as gst;
-use tracing::info;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    gst::init().expect("Error on gsteramer init");
+    #[cfg(target_os = "windows")]
+    windows_impl::setup_windows_env();
+
+    // Initialize GStreamer safely
+    gst::init().expect("Error on gstreamer init");
+
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::DEBUG)
         .finish();
-
     tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
-    info!("gst path: {:?}", std::env::var("GST_PLUGIN_PATH"));
 
     tauri::Builder::default()
         .manage(AppState::default())

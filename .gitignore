@@ -1,2 +1,6 @@
 /target
 .vscode
+*.dll
+gstreamer_bundle/*
+!gstreamer_bundle/**/*.txt
+!gstreamer_bundle/**/

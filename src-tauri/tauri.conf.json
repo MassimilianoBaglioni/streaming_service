@@ -2,9 +2,9 @@
 	"$schema": "https://schema.tauri.app/config/2",
 	"productName": "streaming_server",
 	"version": "0.1.0",
-	"identifier": "com.tauri.dev",
+	"identifier": "com.massimiliano.streaming",
 	"build": {
-		"frontendDist": "../angular-frontend/dist/angular-frontend",
+		"frontendDist": "../angular-frontend/dist/angular-frontend/browser",
 		"devUrl": "http://localhost:4200",
 		"beforeDevCommand": "npm run start",
 		"beforeBuildCommand": "npm run build"
@@ -32,6 +32,9 @@
 			"icons/128x128@2x.png",
 			"icons/icon.icns",
 			"icons/icon.ico"
-		]
+		],
+		"resources": {
+			"../gstreamer_bundle/": ""
+		}
 	}
 }
