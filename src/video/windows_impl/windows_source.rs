@@ -1,11 +1,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{net::Ipv4Addr, ptr::null_mut};
 
 use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_server::StreamingEventSocketServer;
-use crate::video::windows_impl::windows_streaming_settings;
 use crate::{
     network::NetInfo,
     video::{
@@ -170,6 +169,7 @@ impl WindowsSource {
             width,
             height,
             self.host_ip,
+            self.windows_settings.bitrate,
             self.streaming_port,
         ));
 

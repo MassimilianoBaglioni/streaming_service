@@ -225,18 +225,24 @@ pub fn start_screen_stream(
     Ok(())
 }
 
-pub fn create_windows_pipeline(width: u32, height: u32, host: Ipv4Addr, port: u16) -> Pipeline {
+pub fn create_windows_pipeline(
+    width: u32,
+    height: u32,
+    host: Ipv4Addr,
+    bitrate: u32,
+    port: u16,
+) -> Pipeline {
     let pipeline_description = format!(
         "appsrc name=src is-live=true format=time \
      caps=video/x-raw,format=BGRA,width={},height={} ! \
      videoconvert ! \
      video/x-raw,format=NV12 ! \
-     mfh264enc bitrate=15000 ! \
+     mfh264enc bitrate={} ! \
      video/x-h264,profile=high ! \
      h264parse ! \
      rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
      udpsink host={} port={} sync=false async=false",
-        width, height, host, port
+        width, height, bitrate, host, port,
     );
 
     gstreamer::parse::launch(&pipeline_description)
