@@ -5,6 +5,7 @@ use serde::Deserialize;
 use streaming_server::{
     network::NetInfo,
     video::{
+        commons::scaling_method::ScalingMethod,
         video_source::VideoSourceKind,
         windows_impl::{
             client::windows_client::StopWatchingEvent,
@@ -23,10 +24,12 @@ use {
 };
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoSettings {
     pub fps: u16,
     pub bitrate: u32,
     pub resolution: u16,
+    pub scaling_method: ScalingMethod,
 }
 
 #[cfg(target_os = "linux")]
@@ -203,6 +206,7 @@ fn map_windows_settings(frontend_settings: &VideoSettings) -> WindowsStreamingSe
     windows_settings.fps = frontend_settings.fps as u32;
     windows_settings.bitrate = frontend_settings.bitrate;
     windows_settings.resolution = frontend_settings.resolution;
+    windows_settings.scaling_method = frontend_settings.scaling_method;
 
     windows_settings
 }

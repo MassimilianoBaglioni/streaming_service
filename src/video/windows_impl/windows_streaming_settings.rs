@@ -1,3 +1,4 @@
+use crate::video::commons::scaling_method::ScalingMethod;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 
 // TODO allow the user to set this up from the fronted, like increase the number of buffers, or change the pixel format for HDR
@@ -8,6 +9,7 @@ pub struct WindowsStreamingSettings {
     pub fps: u32,
     pub bitrate: u32,
     pub resolution: u16,
+    pub scaling_method: ScalingMethod,
 }
 
 impl Default for WindowsStreamingSettings {
@@ -18,6 +20,7 @@ impl Default for WindowsStreamingSettings {
             fps: 30,
             bitrate: 10000,
             resolution: 1080,
+            scaling_method: ScalingMethod::NearestNeighbour,
         }
     }
 }

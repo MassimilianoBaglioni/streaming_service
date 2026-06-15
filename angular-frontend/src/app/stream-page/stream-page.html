@@ -70,6 +70,17 @@
           </div>
         </div>
       </div>
+      <div class="three-col" [formGroup]="videoForm">
+        <div class="field">
+          <span class="field-label">SCALING</span>
+          <select class="field-input" formControlName="scalingMethod">
+            <option value="NearestNeighbour">Nearest Neighbour</option>
+            <option value="Bilinear">Bilinear</option>
+            <option value="Lanczos">Lanczos</option>
+            <option value="Mitchell">Mitchell</option>
+          </select>
+        </div>
+      </div>
     </div>
 
     <div class="btn-row">

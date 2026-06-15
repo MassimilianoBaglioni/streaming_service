@@ -43,6 +43,7 @@ export class StreamPage {
     fps: new FormControl('30', [Validators.required, Validators.pattern(/^[1-9]\d*$/)]),
     bitrate: new FormControl('5000', [Validators.required, Validators.pattern(/^[1-9]\d*$/)]),
     resolution: new FormControl('1080', [Validators.required, Validators.pattern(/^[1-9]\d*$/)]),
+    scalingMethod: new FormControl('Bilinear'),
   });
 
   get canStartStream(): boolean {
@@ -66,6 +67,7 @@ export class StreamPage {
       fps: Number(this.videoForm.value.fps),
       resolution: Number(this.videoForm.value.resolution),
       bitrate: Number(this.videoForm.value.bitrate),
+      scalingMethod: String(this.videoForm.value.scalingMethod),
     };
 
     try {
@@ -194,4 +196,5 @@ export interface StreamVideoSettings {
   fps: number;
   bitrate: number;
   resolution: number;
+  scalingMethod: string;
 }

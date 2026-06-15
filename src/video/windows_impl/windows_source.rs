@@ -169,7 +169,7 @@ impl WindowsSource {
             width,
             height,
             self.host_ip,
-            self.windows_settings.bitrate,
+            &self.windows_settings,
             self.streaming_port,
         ));
 

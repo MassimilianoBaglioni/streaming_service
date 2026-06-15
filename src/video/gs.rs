@@ -6,6 +6,9 @@ use gstreamer::{self as gst};
 use gstreamer::{Pipeline, prelude::*};
 use gstreamer_app::AppSrc;
 use tracing::{error, info, warn};
+use winit::platform::windows;
+
+use crate::video::windows_impl::windows_streaming_settings::WindowsStreamingSettings;
 
 pub fn start_screen_stream(
     node_id: u32,
@@ -229,12 +232,35 @@ pub fn create_windows_pipeline(
     width: u32,
     height: u32,
     host: Ipv4Addr,
-    bitrate: u32,
+    windows_settings: &WindowsStreamingSettings,
     port: u16,
 ) -> Pipeline {
+    let video_scale_method = windows_settings.scaling_method.as_gst_method();
+    let aspect_ratio = width as f32 / height as f32;
+
+    let max_height = windows_settings.resolution as f32;
+    let max_width = aspect_ratio * max_height;
+
+    let mut scaled_height = height;
+    let mut scaled_width = width;
+
+    if height as f32 > max_height {
+        scaled_height = max_height as u32;
+        scaled_width = (height as f32 * aspect_ratio) as u32;
+    } else if width as f32 > max_width {
+        scaled_width = max_width as u32;
+        scaled_height = (width as f32 * aspect_ratio) as u32;
+    }
+
+    // Round to even for H.264
+    scaled_width = (scaled_width) & !1;
+    scaled_height = (scaled_height) & !1;
+
     let pipeline_description = format!(
         "appsrc name=src is-live=true format=time \
      caps=video/x-raw,format=BGRA,width={},height={} ! \
+     videoscale method={} add-borders=true ! \
+     video/x-raw,width={},height={} ! \
      videoconvert ! \
      video/x-raw,format=NV12 ! \
      mfh264enc bitrate={} ! \
@@ -242,7 +268,14 @@ pub fn create_windows_pipeline(
      h264parse ! \
      rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
      udpsink host={} port={} sync=false async=false",
-        width, height, bitrate, host, port,
+        width,
+        height,
+        video_scale_method,
+        scaled_width,
+        scaled_height,
+        windows_settings.bitrate,
+        host,
+        port,
     );
 
     gstreamer::parse::launch(&pipeline_description)
