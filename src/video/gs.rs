@@ -228,7 +228,7 @@ pub fn start_screen_stream(
 pub fn create_windows_pipeline(width: u32, height: u32, host: Ipv4Addr, port: u16) -> Pipeline {
     let pipeline_description = format!(
         "appsrc name=src is-live=true format=time \
-     caps=video/x-raw,format=BGRA,width={},height={},framerate=60/1 ! \
+     caps=video/x-raw,format=BGRA,width={},height={} ! \
      videoconvert ! \
      video/x-raw,format=NV12 ! \
      mfh264enc bitrate=15000 ! \
