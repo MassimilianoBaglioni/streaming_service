@@ -4,6 +4,8 @@ import { CommonModule } from '@angular/common';
 import { callCommand } from '../utils/tauri-invoke';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { ToastService } from '../services/toast.service';
+import { VideoSettingsPage } from '../video-settings-page/video-settings-page';
+import { resolve } from '@tauri-apps/api/path';
 
 @Component({
   selector: 'app-stream-page',
@@ -37,6 +39,12 @@ export class StreamPage {
     streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
 
+  videoForm = new FormGroup({
+    fps: new FormControl('30', [Validators.required, Validators.pattern(/^[1-9]\d*$/)]),
+    bitrate: new FormControl('5000', [Validators.required, Validators.pattern(/^[1-9]\d*$/)]),
+    resolution: new FormControl('1080', [Validators.required, Validators.pattern(/^[1-9]\d*$/)]),
+  });
+
   get canStartStream(): boolean {
     return this.streamForm.valid && !this.isStreaming && !this.isWaitingForWatcher;
   }
@@ -53,12 +61,21 @@ export class StreamPage {
     if (!this.canStartStream) return;
     this.isWaitingForWatcher = true;
     this.cdr.markForCheck();
+
+    const videoSettings: StreamVideoSettings = {
+      fps: Number(this.videoForm.value.fps),
+      resolution: Number(this.videoForm.value.resolution),
+      bitrate: Number(this.videoForm.value.bitrate),
+    };
+
     try {
       await callCommand('start_streaming', {
         watcherAddress: this.streamForm.value.watcherAddress,
         streamPort: this.streamForm.value.streamPort,
         tcpPort: this.streamForm.value.tcpPort,
+        videoSettings: videoSettings,
       });
+
       this.isStreaming = true;
       this.startStatusPolling();
       this.cdr.markForCheck();
@@ -171,4 +188,10 @@ export class StreamPage {
       this.statusCheckInterval = null;
     }
   }
+}
+
+export interface StreamVideoSettings {
+  fps: number;
+  bitrate: number;
+  resolution: number;
 }

@@ -1,10 +1,15 @@
 use std::sync::mpsc::channel;
 
 use crate::state::app_state::AppState;
+use serde::Deserialize;
 use streaming_server::{
     network::NetInfo,
     video::{
-        video_source::VideoSourceKind, windows_impl::client::windows_client::StopWatchingEvent,
+        video_source::VideoSourceKind,
+        windows_impl::{
+            client::windows_client::StopWatchingEvent,
+            windows_streaming_settings::WindowsStreamingSettings,
+        },
     },
 };
 use tauri::{AppHandle, Emitter};
@@ -16,6 +21,13 @@ use {
         client::windows_client::WindowsClient, windows_source::create_windows_video_source,
     },
 };
+
+#[derive(Debug, Deserialize)]
+pub struct VideoSettings {
+    pub fps: u16,
+    pub bitrate: u32,
+    pub resolution: u16,
+}
 
 #[cfg(target_os = "linux")]
 use {
@@ -68,6 +80,7 @@ pub async fn start_streaming(
     stream_port: String,
     tcp_port: String,
     watcher_address: String,
+    video_settings: VideoSettings,
 ) -> Result<(), String> {
     let net_info = NetInfo::parse_info(stream_port, tcp_port, watcher_address)
         .expect("Parsing net info from fontend error");
@@ -77,10 +90,16 @@ pub async fn start_streaming(
     // This must stay AFTER async calls, can't lock with async functions
     let mut lock = state.video_source.lock().unwrap();
 
+    let windows_streaming_settings = map_windows_settings(&video_settings);
+
     if lock.is_none() {
         info!("Video source not initialized, initializing inside start_streaming");
 
-        let new_source = create_windows_video_source(&net_info, capture_item.clone());
+        let new_source = create_windows_video_source(
+            &net_info,
+            capture_item.clone(),
+            windows_streaming_settings.clone(),
+        );
         *lock = Some(new_source);
     }
 
@@ -91,6 +110,7 @@ pub async fn start_streaming(
             VideoSourceKind::Windows(windows_source) => {
                 windows_source.set_graphics_capture_item(capture_item.clone());
                 windows_source.update_network_info(&net_info);
+                windows_source.windows_settings = windows_streaming_settings;
                 windows_source.start_streaming();
             }
         }
@@ -175,4 +195,14 @@ pub fn stop_watching(state: tauri::State<AppState>) {
             .expect("Failed to send client stop event");
     }
     info!("Called stop watching");
+}
+
+fn map_windows_settings(frontend_settings: &VideoSettings) -> WindowsStreamingSettings {
+    let mut windows_settings = WindowsStreamingSettings::default();
+
+    windows_settings.fps = frontend_settings.fps as u32;
+    windows_settings.bitrate = frontend_settings.bitrate;
+    windows_settings.resolution = frontend_settings.resolution;
+
+    windows_settings
 }

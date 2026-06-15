@@ -45,6 +45,33 @@
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Video Settings</span>
+      </div>
+
+      <div class="three-col" [formGroup]="videoForm">
+        <div class="field">
+          <span class="field-label">FPS</span>
+          <input class="field-input" placeholder="60" formControlName="fps" />
+        </div>
+        <div class="field">
+          <span class="field-label">BIT-RATE</span>
+          <div class="field-input-wrapper">
+            <input class="field-input" placeholder="5000" formControlName="bitRate" />
+            <span class="field-unit">kbps</span>
+          </div>
+        </div>
+        <div class="field">
+          <span class="field-label">RESOLUTION</span>
+          <div class="field-input-wrapper">
+            <input class="field-input" placeholder="1080" formControlName="resolution" />
+            <span class="field-unit">p</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="btn-row">
       <button class="btn btn-primary" [disabled]="!canStartStream" (click)="startStreaming()">
         {{ isStreaming ? 'Streaming...' : 'Start Streaming' }}

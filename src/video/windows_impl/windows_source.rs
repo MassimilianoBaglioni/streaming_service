@@ -5,6 +5,7 @@ use std::{net::Ipv4Addr, ptr::null_mut};
 
 use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_server::StreamingEventSocketServer;
+use crate::video::windows_impl::windows_streaming_settings;
 use crate::{
     network::NetInfo,
     video::{
@@ -46,7 +47,7 @@ pub struct WindowsSource {
     host_ip: Ipv4Addr,
     streaming_port: u16,
     graphics_capture_item: Option<GraphicsCaptureItem>,
-    windows_settings: WindowsStreamingSettings,
+    pub windows_settings: WindowsStreamingSettings,
     token: Option<i64>,
     frame_pool: Option<Direct3D11CaptureFramePool>,
     graphics_capture_session: Option<GraphicsCaptureSession>,
@@ -60,6 +61,7 @@ impl WindowsSource {
         streaming_port: u16,
         host_ip: Ipv4Addr,
         graphics_capture_item: Option<GraphicsCaptureItem>,
+        windows_settings: WindowsStreamingSettings,
     ) -> Self {
         Self {
             tcp_socket: None,
@@ -67,7 +69,7 @@ impl WindowsSource {
             streaming_port,
             host_ip,
             graphics_capture_item,
-            windows_settings: WindowsStreamingSettings::default(),
+            windows_settings,
             token: None,
             frame_pool: None,
             graphics_capture_session: None,
@@ -172,7 +174,7 @@ impl WindowsSource {
         ));
 
         info!(
-            "host_ipL {:?}, port: {:?}",
+            "host_ip: {:?}, port: {:?}",
             self.host_ip, self.streaming_port
         );
 
@@ -389,11 +391,13 @@ impl WindowsSource {
 pub fn create_windows_video_source(
     net_info: &NetInfo,
     graphics_capture_item: Option<GraphicsCaptureItem>,
+    windows_streaming_settings: WindowsStreamingSettings,
 ) -> Arc<Mutex<VideoSourceKind>> {
     Arc::new(Mutex::new(VideoSourceKind::Windows(WindowsSource::new(
         net_info.tcp_port,
         net_info.stream_port,
         net_info.target_ip,
         graphics_capture_item,
+        windows_streaming_settings,
     ))))
 }
