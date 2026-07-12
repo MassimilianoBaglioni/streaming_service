@@ -1,18 +1,45 @@
 use anyhow::Result;
-use iroh::{Endpoint, endpoint::presets};
+use iroh::{
+    endpoint::presets,
+    Endpoint,
+};
 use iroh_tickets::endpoint::EndpointTicket;
+use serde::Deserialize;
 use std::str::FromStr;
+
+pub mod connection;
+
+#[derive(Clone, Debug)]
+pub struct IrohInfo {
+    pub ticket: Option<EndpointTicket>,
+    pub endpoint: Option<Endpoint>,
+}
+
+impl IrohInfo {
+    pub fn new(ticket: EndpointTicket, endpoint: Endpoint) -> Self {
+        IrohInfo {
+            ticket: Some(ticket),
+            endpoint: Some(endpoint),
+        }
+    }
+}
+
+impl Default for IrohInfo {
+    fn default() -> Self {
+        Self {
+            ticket: None,
+            endpoint: None,
+        }
+    }
+}
 
 const ALPN: &[u8] = b"myapp/test/1";
 
 pub async fn run_receiver() -> Result<()> {
-    let endpoint = Endpoint::builder(presets::N0)
-        .alpns(vec![ALPN.to_vec()])
-        .bind()
-        .await?;
-    endpoint.online().await;
+    let (ticket, endpoint) = generate_ticket()
+        .await
+        .expect("Failed to get ticket/endpoint");
 
-    let ticket = EndpointTicket::new(endpoint.addr());
     println!("Invite ticket: {ticket}");
     println!("Waiting for sender...");
 
@@ -28,6 +55,16 @@ pub async fn run_receiver() -> Result<()> {
     }
     endpoint.close().await;
     Ok(())
+}
+
+pub async fn generate_ticket() -> Result<(EndpointTicket, Endpoint)> {
+    let endpoint = Endpoint::builder(presets::N0)
+        .alpns(vec![ALPN.to_vec()])
+        .bind()
+        .await?;
+    endpoint.online().await;
+
+    Ok((EndpointTicket::new(endpoint.addr()), endpoint))
 }
 
 pub async fn run_sender(ticket_str: &str) -> Result<()> {

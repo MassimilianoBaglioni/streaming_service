@@ -8,7 +8,9 @@ pub mod windows_impl;
 
 pub mod client;
 
-use commands::streaming::{start_streaming, start_watching, stop_streaming, stop_watching};
+use commands::streaming::{
+    generate_ticket, start_streaming, start_watching, stop_streaming, stop_watching,
+};
 use state::app_state::AppState;
 use streaming_server::gstreamer as gst;
 use tracing::Level;
@@ -34,6 +36,7 @@ pub fn run() {
             stop_streaming,
             start_watching,
             stop_watching,
+            generate_ticket,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

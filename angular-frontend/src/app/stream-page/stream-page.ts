@@ -15,6 +15,8 @@ import { resolve } from '@tauri-apps/api/path';
 })
 export class StreamPage {
   mode: 'streaming' | 'watching' = 'streaming';
+  connectionMode: 'direct' | 'invite' = 'direct';
+  watchConnectionMode: 'direct' | 'invite' = 'direct';
   isStreaming = false;
   isWatching = false;
   isWaitingForWatcher = false;
@@ -35,6 +37,7 @@ export class StreamPage {
 
   watchForm = new FormGroup({
     streamerAddress: new FormControl('127.0.0.1', [Validators.required]),
+    inviteLink: new FormControl(''),
     tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
     streamPort: new FormControl('5000', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
   });
@@ -47,15 +50,42 @@ export class StreamPage {
   });
 
   get canStartStream(): boolean {
-    return this.streamForm.valid && !this.isStreaming && !this.isWaitingForWatcher;
+    if (!this.streamForm.valid || this.isStreaming || this.isWaitingForWatcher) {
+      return false;
+    }
+
+    return this.connectionMode === 'direct' || !!this.inviteTicket;
   }
 
   get canStartWatch(): boolean {
-    return this.watchForm.valid && !this.isWatching;
+    if (this.isWatching) {
+      return false;
+    }
+
+    const tcpPortValid = this.watchForm.get('tcpPort')?.valid;
+    const streamPortValid = this.watchForm.get('streamPort')?.valid;
+
+    if (!tcpPortValid || !streamPortValid) {
+      return false;
+    }
+
+    if (this.watchConnectionMode === 'direct') {
+      return this.watchForm.get('streamerAddress')?.valid ?? false;
+    }
+
+    return !!this.watchForm.value.inviteLink?.trim();
   }
 
   setMode(newMode: 'streaming' | 'watching'): void {
     this.mode = newMode;
+  }
+
+  setConnectionMode(newMode: 'direct' | 'invite'): void {
+    this.connectionMode = newMode;
+  }
+
+  setWatchConnectionMode(newMode: 'direct' | 'invite'): void {
+    this.watchConnectionMode = newMode;
   }
 
   async startStreaming(): Promise<void> {
@@ -76,6 +106,7 @@ export class StreamPage {
         streamPort: this.streamForm.value.streamPort,
         tcpPort: this.streamForm.value.tcpPort,
         videoSettings: videoSettings,
+        connectionMode: this.connectionMode === 'invite' ? 'Iroh' : 'Direct',
       });
 
       this.isStreaming = true;
@@ -88,6 +119,29 @@ export class StreamPage {
       this.isWaitingForWatcher = false;
       this.cdr.markForCheck();
     }
+  }
+
+  inviteTicket: string | null = null;
+  isGeneratingTicket = false;
+
+  async generateTicket(): Promise<void> {
+    this.isGeneratingTicket = true;
+    this.cdr.markForCheck();
+    try {
+      this.inviteTicket = await callCommand<string>('generate_ticket');
+    } catch (error) {
+      console.error('Failed to generate ticket:', error);
+      this.toastService.show('Failed to generate invite link', 'danger');
+    } finally {
+      this.isGeneratingTicket = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  async copyTicket(): Promise<void> {
+    if (!this.inviteTicket) return;
+    await navigator.clipboard.writeText(this.inviteTicket);
+    this.toastService.show('Invite link copied!', 'informative');
   }
 
   async stopStreaming(): Promise<void> {
@@ -114,11 +168,14 @@ export class StreamPage {
       // Clean up old listeners before creating new ones
       this.cleanupWatchListeners();
 
+      const inviteLink = this.watchForm.value.inviteLink?.trim();
+
       await callCommand('start_watching', {
         streamerAddress: this.watchForm.value.streamerAddress,
         streamPort: this.watchForm.value.streamPort,
         tcpPort: this.watchForm.value.tcpPort,
-        streamerIp: this.watchForm.value.streamerAddress,
+        streamerIp: this.watchForm.value.streamerAddress ?? '127.0.0.1',
+        ticket: this.watchConnectionMode === 'invite' && inviteLink ? inviteLink : undefined,
       });
       this.isWatching = true;
 

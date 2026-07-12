@@ -1,11 +1,21 @@
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, MutexGuard};
 
-use crate::network::NetInfo;
+use std::thread;
+use tokio::sync::Mutex;
+
+use crate::network::iroh::connection::ClientConnection;
 use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_client::StreamingEventSocketClient;
-use gstreamer::prelude::*;
-use gstreamer::{self as gst};
+use crate::network::NetInfo;
+use crate::video::gs::{build_client_iroh_pipeline, build_client_udp_pipeline};
+use gstreamer as gst;
+use gstreamer::{prelude::*, Pipeline};
+use gstreamer_app::AppSrc;
+use iroh::endpoint::RecvStream;
+use iroh::endpoint::Side::Client;
+use iroh::Endpoint;
+use iroh_tickets::endpoint::EndpointTicket;
 use tracing::{error, info, warn};
 
 pub enum StopWatchingEvent {
@@ -18,6 +28,7 @@ pub struct WindowsClient {
     net_info: NetInfo,
     events_sender: Sender<StopWatchingEvent>,
     events_receiver: Receiver<StopWatchingEvent>,
+    client_connection: Arc<Mutex<Option<ClientConnection>>>,
 }
 
 impl WindowsClient {
@@ -26,42 +37,61 @@ impl WindowsClient {
         events_sender: Sender<StopWatchingEvent>,
         events_receiver: Receiver<StopWatchingEvent>,
     ) -> Self {
+        let client_connection =
+            Arc::new(Mutex::new(Some(ClientConnection::from(net_info.clone()))));
         Self {
             net_info,
             events_sender,
             events_receiver,
+            client_connection,
         }
     }
 
-    pub fn receive(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn receive(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let streaming_port = self.net_info.stream_port;
-        let streamer_ip = self.net_info.target_ip;
-        let tcp_port = self.net_info.tcp_port;
 
-        let tcp_address = format!("{}:{}", streamer_ip, tcp_port);
-        info!("Socket address: {}", tcp_address);
+        let pipeline = match &self.net_info.connection_mode {
+            crate::network::ConnectionMode::Direct => {
+                build_client_udp_pipeline(self.net_info.stream_port)
+            }
+            crate::network::ConnectionMode::Iroh { info } => build_client_iroh_pipeline(),
+        };
 
-        let mut socket = StreamingEventSocketClient::connect(&tcp_address)?;
+        self.client_connection
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .pipeline = Some(Arc::new(pipeline));
 
-        let pipeline_description = format!(
-            "\
-            udpsrc port={} buffer-size=8388608 ! \
-            application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96 ! \
-            rtpjitterbuffer latency=200 ! \
-            queue leaky=downstream max-size-time=1000000000 ! \
-            rtph264depay ! \
-            h264parse ! \
-            d3d11h264dec ! \
-            queue leaky=downstream max-size-time=500000000 ! \
-            d3d11videosink sync=false",
-            streaming_port
-        );
-        info!("Streaming port: {}", streaming_port);
-
-        let pipeline = gst::parse::launch(&pipeline_description)?;
-        let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
+        let pipeline = {
+            let guard = self.client_connection.lock().await;
+            guard.as_ref().unwrap().pipeline.as_ref().unwrap().clone()
+        };
 
         let bus = pipeline.bus().unwrap();
+
+        self.client_connection
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .connect()
+            .await;
+
+        let client_connection_recv_clone = self.client_connection.clone();
+
+        let receive_task_handle = tokio::task::spawn(async move {
+            client_connection_recv_clone
+                .lock()
+                .await
+                .as_mut()
+                .unwrap()
+                .receive()
+                .await;
+        });
+
+        let client_connection_clone = self.client_connection.clone();
 
         pipeline.set_state(gst::State::Playing)?;
         info!("Receiver online. Listening on port {}...", streaming_port);
@@ -72,18 +102,27 @@ impl WindowsClient {
 
         // Thread checking for socket events that can stop the stream
         // Spawn it before the loop to avoid ownership issues
-        thread::spawn(move || match socket.read_event() {
-            Ok(StreamingEvent::End) => {
-                info!("Received End event, from tcp socket");
-                socket_sender_clone
-                    .send(StopWatchingEvent::StreamEnded)
-                    .expect("Error on sending the event from the event socket");
-            }
-            Err(e) => {
-                warn!("Received err: {:?}, from tcp socket", e);
-                socket_sender_clone
-                    .send(StopWatchingEvent::GenericError)
-                    .expect("Error on sending the event from the event socket");
+        tokio::spawn(async move {
+            match client_connection_clone
+                .as_ref()
+                .lock()
+                .await
+                .as_mut()
+                .unwrap()
+                .read_event()
+            {
+                Ok(StreamingEvent::End) => {
+                    info!("Received End event, from tcp socket");
+                    socket_sender_clone
+                        .send(StopWatchingEvent::StreamEnded)
+                        .expect("Error on sending the event from the event socket");
+                }
+                Err(e) => {
+                    warn!("Received err: {:?}, from tcp socket", e);
+                    socket_sender_clone
+                        .send(StopWatchingEvent::GenericError)
+                        .expect("Error on sending the event from the event socket");
+                }
             }
         });
 
@@ -123,11 +162,11 @@ impl WindowsClient {
                         warn!("{:?}", w);
                     }
                     gst::MessageView::StateChanged(s) => {
-                        if let Some(src) = msg.src()
-                            && *src == pipeline.clone().upcast::<gst::Object>()
-                        {
-                            info!("Pipeline state: {:?} -> {:?}", s.old(), s.current());
-                        }
+                        // if let Some(src) = msg.src()
+                        //     && *src == pipeline.clone().upcast::<gst::Object>()
+                        // {
+                        //     info!("Pipeline state: {:?} -> {:?}", s.old(), s.current());
+                        // }
                     }
                     gst::MessageView::Element(e) => {
                         if let Some(_structure) = e.structure() {
@@ -147,7 +186,7 @@ impl WindowsClient {
         }
 
         pipeline.send_event(gst::event::Eos::new());
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
         pipeline.set_state(gst::State::Paused)?;
         let _ = pipeline.state(gst::ClockTime::from_seconds(2));

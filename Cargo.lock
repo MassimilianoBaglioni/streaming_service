@@ -6471,6 +6471,8 @@ dependencies = [
 name = "streaming_server_app"
 version = "0.1.0"
 dependencies = [
+ "iroh",
+ "iroh-tickets",
  "log",
  "raw-window-handle",
  "serde",
@@ -6479,6 +6481,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "windows 0.62.2",
