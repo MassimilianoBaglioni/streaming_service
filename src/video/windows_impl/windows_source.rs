@@ -1,10 +1,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{net::Ipv4Addr, ptr::null_mut};
+use tokio::sync::Mutex;
 
-use crate::network::streaming_event::StreamingEvent;
-use crate::network::streaming_events_server::StreamingEventSocketServer;
+use crate::network::iroh::connection::ServerConnection;
+use crate::network::ConnectionMode;
 use crate::{
     network::NetInfo,
     video::{
@@ -13,8 +14,10 @@ use crate::{
     },
 };
 use gstreamer::prelude::ElementExt;
+use gstreamer::Sample;
 use tracing::{error, info, warn};
 use windows::{
+    core::{IInspectable, Interface, Ref},
     Foundation::TypedEventHandler,
     Graphics::{
         Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession},
@@ -26,31 +29,49 @@ use windows::{
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_HARDWARE,
             Direct3D11::{
-                D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-                D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING, D3D11CreateDevice, ID3D11Device,
-                ID3D11DeviceContext, ID3D11Texture2D,
+                D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
+                ID3D11Texture2D, D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+                D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
             },
             Dxgi::IDXGIDevice,
-            Dxgi::{DXGI_MAP_READ, DXGI_MAPPED_RECT, IDXGISurface},
+            Dxgi::{IDXGISurface, DXGI_MAPPED_RECT, DXGI_MAP_READ},
         },
         System::WinRT::Direct3D11::{
             CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
         },
     },
-    core::{IInspectable, Interface, Ref},
 };
 
+struct SendWrapper<T>(T);
+unsafe impl<T> Send for SendWrapper<T> {}
+
+impl<T> SendWrapper<T> {
+    fn new(val: T) -> Self {
+        Self(val)
+    }
+    fn get(&self) -> &T {
+        &self.0
+    }
+    fn get_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+    fn into_inner(self) -> T {
+        self.0
+    }
+}
+
 pub struct WindowsSource {
-    tcp_socket: Option<StreamingEventSocketServer>,
+    connection: Option<Arc<Mutex<ServerConnection>>>,
     tcp_port: u16,
     host_ip: Ipv4Addr,
     streaming_port: u16,
-    graphics_capture_item: Option<GraphicsCaptureItem>,
+    graphics_capture_item: Option<SendWrapper<GraphicsCaptureItem>>,
     pub windows_settings: WindowsStreamingSettings,
     token: Option<i64>,
-    frame_pool: Option<Direct3D11CaptureFramePool>,
-    graphics_capture_session: Option<GraphicsCaptureSession>,
+    frame_pool: Option<SendWrapper<Direct3D11CaptureFramePool>>,
+    graphics_capture_session: Option<SendWrapper<GraphicsCaptureSession>>,
     app_src: Option<Arc<gstreamer_app::AppSrc>>,
+    app_sink: Option<Arc<gstreamer_app::AppSink>>,
     pipeline: Option<gstreamer::Pipeline>,
 }
 
@@ -61,18 +82,23 @@ impl WindowsSource {
         host_ip: Ipv4Addr,
         graphics_capture_item: Option<GraphicsCaptureItem>,
         windows_settings: WindowsStreamingSettings,
+        connection_mode: ConnectionMode,
     ) -> Self {
+        let mut connection = ServerConnection::default();
+        connection.connection_mode = Some(connection_mode);
+
         Self {
-            tcp_socket: None,
+            connection: None,
             tcp_port,
             streaming_port,
             host_ip,
-            graphics_capture_item,
+            graphics_capture_item: graphics_capture_item.map(SendWrapper::new),
             windows_settings,
             token: None,
             frame_pool: None,
             graphics_capture_session: None,
             app_src: None,
+            app_sink: None,
             pipeline: None,
         }
     }
@@ -81,30 +107,35 @@ impl WindowsSource {
         &mut self,
         graphics_capture_item: Option<GraphicsCaptureItem>,
     ) {
-        self.graphics_capture_item = graphics_capture_item;
+        self.graphics_capture_item = graphics_capture_item.map(SendWrapper::new);
     }
 
-    pub fn start_streaming(&mut self) {
+    pub async fn start_streaming(&mut self) {
         info!("Start streaming video source called");
         // Create the server socket if it doesn't exist yet
-        if self.tcp_socket.is_none() {
-            self.tcp_socket = Some(
-                StreamingEventSocketServer::bind(&format!("0.0.0.0:{}", self.tcp_port))
-                    .expect("Failed to bind tcp socket."),
-            );
-        }
-
-        // Accept a client (closes previous connection if any and waits for a new one)
-        self.tcp_socket
-            .as_mut()
+        self.connection
+            .as_ref()
             .unwrap()
+            .lock()
+            .await
             .accept()
-            .expect("Failed to accept client");
-        info!("Accepted client");
+            .await;
+
+        let is_direct = matches!(
+            self.connection
+                .as_ref()
+                .unwrap()
+                .lock()
+                .await
+                .connection_mode
+                .as_ref()
+                .unwrap(),
+            ConnectionMode::Direct
+        );
 
         let pixel_format = self.windows_settings.pixel_format.clone();
         let buffer_count = self.windows_settings.buffer_count.clone();
-        let capture_item = self.graphics_capture_item.as_ref().unwrap().clone();
+        let capture_item = self.graphics_capture_item.as_ref().unwrap().get().clone();
 
         let mut device: Option<ID3D11Device> = None;
         let mut context: Option<ID3D11DeviceContext> = None;
@@ -165,22 +196,34 @@ impl WindowsSource {
         }
         let staging_texture = staging_texture.unwrap();
 
-        self.pipeline = Some(gs::create_windows_pipeline(
-            width,
-            height,
-            self.host_ip,
-            &self.windows_settings,
-            self.streaming_port,
-        ));
+        if is_direct {
+            info!(
+                "host_ip: {:?}, port: {:?}",
+                self.host_ip, self.streaming_port
+            );
+            self.pipeline = Some(gs::create_windows_pipeline(
+                width,
+                height,
+                self.host_ip,
+                &self.windows_settings,
+                self.streaming_port,
+            ))
+        } else {
+            self.pipeline = Some(gs::create_windows_pipeline_with_app_dest(
+                width,
+                height,
+                &self.windows_settings,
+            ));
 
-        info!(
-            "host_ip: {:?}, port: {:?}",
-            self.host_ip, self.streaming_port
-        );
+            self.app_src = Some(Arc::new(gs::get_app_src(self.pipeline.as_ref().unwrap())));
 
-        self.app_src = Some(Arc::new(gs::create_app_src(
-            self.pipeline.as_ref().unwrap(),
-        )));
+            self.app_sink = Some(Arc::new(gs::get_app_sink(
+                self.pipeline.as_ref().unwrap(),
+                "rtp_sink",
+            )));
+        }
+
+        self.app_src = Some(Arc::new(gs::get_app_src(self.pipeline.as_ref().unwrap())));
 
         let app_src_clone = self.app_src.clone();
 
@@ -334,23 +377,57 @@ impl WindowsSource {
             .set_state(gstreamer::State::Playing)
             .expect("Failed to set pipeline to Playing");
         // store to keep alive
-        self.frame_pool = Some(frame_pool);
-        self.graphics_capture_session = Some(session);
+        self.frame_pool = Some(SendWrapper::new(frame_pool));
+        self.graphics_capture_session = Some(SendWrapper::new(session));
         self.token = Some(token);
+
+        if (!is_direct) {
+            // Doing this here becase we need a playing pipeline to pull, otherwise we get errors
+            let app_sink_clone = self.app_sink.clone();
+
+            let (sender, receiver) = tokio::sync::mpsc::channel::<Sample>(32);
+
+            let frame_sender_thread_handle = tokio::task::spawn_blocking(move || {
+                let app_sink = app_sink_clone.unwrap();
+                loop {
+                    match app_sink.pull_sample() {
+                        Ok(sample) => {
+                            if sender.blocking_send(sample).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!("{:?}", e);
+                            warn!("Error on receiving the sample, before sending");
+                        }
+                    }
+                }
+            });
+
+            let connection_clone = self.connection.clone().unwrap();
+
+            let iroh_sender_task_handle = tokio::task::spawn(async move {
+                connection_clone
+                    .lock()
+                    .await
+                    .send_frames_iroh(receiver)
+                    .await;
+            });
+        }
 
         info!("Capture started");
     }
 
-    pub fn stop_streaming(&mut self) {
+    pub async fn stop_streaming(&mut self) {
         // stop capture first so no more frames arrive
         if let Some(session) = &self.graphics_capture_session {
-            session.Close().ok();
+            session.get().Close().ok();
         }
 
         // unregister the frame handler
         if let (Some(pool), Some(token)) = (&self.frame_pool, self.token) {
-            pool.RemoveFrameArrived(token).ok();
-            pool.Close().ok();
+            pool.get().RemoveFrameArrived(token).ok();
+            pool.get().Close().ok();
         }
 
         // stop gstreamer pipeline
@@ -365,13 +442,12 @@ impl WindowsSource {
         self.pipeline = None;
         self.app_src = None;
 
-        let socket = self.tcp_socket.as_mut().unwrap();
-        match socket.send_event(&StreamingEvent::End) {
-            Ok(_) => info!("Sent End event"),
-            Err(e) => warn!("Failed to send End event: {:?}", e),
-        }
-        socket.disconnect();
-        self.tcp_socket = None;
+        self.connection
+            .as_mut()
+            .expect("No connection established cannot close it")
+            .lock()
+            .await
+            .send_end_event_and_close_conn();
 
         info!("Streaming stopped");
     }
@@ -381,13 +457,18 @@ impl WindowsSource {
         self.tcp_port = net_info.tcp_port;
         self.streaming_port = net_info.stream_port;
 
-        self.tcp_socket = Some(
-            StreamingEventSocketServer::bind(&format!("0.0.0.0:{}", self.tcp_port))
-                .expect("Failed to bind tcp socket."),
-        );
+        match &net_info.connection_mode {
+            ConnectionMode::Direct => {
+                self.connection = Some(Arc::new(Mutex::new(ServerConnection::from(
+                    net_info.tcp_port,
+                ))))
+            }
+            ConnectionMode::Iroh { info } => {
+                self.connection = Some(Arc::new(Mutex::new(ServerConnection::from(info.clone()))))
+            }
+        }
     }
 }
-
 pub fn create_windows_video_source(
     net_info: &NetInfo,
     graphics_capture_item: Option<GraphicsCaptureItem>,
@@ -399,5 +480,6 @@ pub fn create_windows_video_source(
         net_info.target_ip,
         graphics_capture_item,
         windows_streaming_settings,
+        net_info.connection_mode.clone(),
     ))))
 }

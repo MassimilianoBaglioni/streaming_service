@@ -1,9 +1,13 @@
-use std::sync::mpsc::channel;
+use std::{str::FromStr, sync::mpsc::channel};
 
 use crate::state::app_state::AppState;
+use ::iroh::{endpoint::presets, Endpoint};
+use iroh_tickets::endpoint::EndpointTicket;
 use serde::Deserialize;
+use streaming_server::network::iroh;
+#[cfg(target_os = "windows")]
 use streaming_server::{
-    network::NetInfo,
+    network::{iroh::IrohInfo, ConnectionMode, NetInfo},
     video::{
         commons::scaling_method::ScalingMethod,
         video_source::VideoSourceKind,
@@ -30,6 +34,12 @@ pub struct VideoSettings {
     pub bitrate: u32,
     pub resolution: u16,
     pub scaling_method: ScalingMethod,
+}
+
+#[derive(Deserialize)]
+pub enum ConnectionModeFrontend {
+    Direct,
+    Iroh,
 }
 
 #[cfg(target_os = "linux")]
@@ -84,14 +94,32 @@ pub async fn start_streaming(
     tcp_port: String,
     watcher_address: String,
     video_settings: VideoSettings,
+    connection_mode: ConnectionModeFrontend,
 ) -> Result<(), String> {
-    let net_info = NetInfo::parse_info(stream_port, tcp_port, watcher_address)
-        .expect("Parsing net info from fontend error");
+    let connection_mode = get_connection_mode(connection_mode);
+
+    let is_direct = match connection_mode {
+        ConnectionMode::Direct => true,
+        ConnectionMode::Iroh { .. } => false,
+    };
+
+    let mut net_info = NetInfo::parse_info(stream_port, tcp_port, watcher_address, connection_mode)
+        .expect("Parsing net info from frontend error");
+
+    /*
+     *   TODO this is trash actually. We only set the values inside the state when we press the generate ticket button from the ui instead of passing it.
+     */
+
+    if is_direct {
+    } else {
+        let iroh_info = state.iroh_info.lock().await.clone().unwrap();
+        net_info.connection_mode = ConnectionMode::Iroh { info: iroh_info };
+    }
 
     let capture_item = show_picker(app.clone()).await;
 
     // This must stay AFTER async calls, can't lock with async functions
-    let mut lock = state.video_source.lock().unwrap();
+    let mut lock = state.video_source.lock().await;
 
     let windows_streaming_settings = map_windows_settings(&video_settings);
 
@@ -108,13 +136,14 @@ pub async fn start_streaming(
 
     if let Some(video_source) = lock.as_ref() {
         info!("Video source already initialized, starting stream");
-        let mut vs = video_source.lock().unwrap();
+        let mut vs = video_source.lock().await;
         match &mut *vs {
             VideoSourceKind::Windows(windows_source) => {
                 windows_source.set_graphics_capture_item(capture_item.clone());
+                info!("NETINFO value: {:?}", net_info);
                 windows_source.update_network_info(&net_info);
                 windows_source.windows_settings = windows_streaming_settings;
-                windows_source.start_streaming();
+                windows_source.start_streaming().await;
             }
         }
     }
@@ -123,14 +152,14 @@ pub async fn start_streaming(
 }
 
 #[tauri::command]
-pub fn stop_streaming(state: tauri::State<AppState>) {
+pub async fn stop_streaming(state: tauri::State<'_, AppState>) -> Result<(), String> {
     // TODO check that we close the tcp sockets when stop streaming or stop watching are called
-    if let Some(video_source) = state.video_source.lock().unwrap().as_ref() {
-        let mut vs = video_source.lock().unwrap();
+    if let Some(video_source) = state.video_source.lock().await.as_ref() {
+        let mut vs = video_source.lock().await;
         match &mut *vs {
             #[cfg(target_os = "windows")]
             VideoSourceKind::Windows(windows_source) => {
-                windows_source.stop_streaming();
+                windows_source.stop_streaming().await;
             }
             #[cfg(target_os = "linux")]
             VideoSourceKind::Pipewire(pipewire_source) => {
@@ -141,63 +170,94 @@ pub fn stop_streaming(state: tauri::State<AppState>) {
         warn!("No video source obj to stop the stream");
     }
     info!("Stop streaming flag set to true");
+    Ok(())
 }
 
 #[tauri::command]
-pub fn start_watching(
+pub async fn start_watching(
     app: AppHandle,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
     stream_port: String,
     tcp_port: String,
     streamer_ip: String,
-) {
-    let net_info = NetInfo::parse_info(stream_port, tcp_port, streamer_ip)
-        .expect("Parsing net info from fontend error");
+    ticket: Option<String>,
+) -> Result<(), String> {
+    let connection_mode = if let Some(ticket) = ticket.filter(|value| !value.trim().is_empty()) {
+        let endpoint = Endpoint::bind(presets::N0)
+            .await
+            .expect("Failed to create endpoint");
+        let parsed_ticket = EndpointTicket::from_str(ticket.trim())
+            .map_err(|error| format!("Invalid invite link: {error}"))?;
+        ConnectionMode::Iroh {
+            info: IrohInfo::new(parsed_ticket, endpoint),
+        }
+    } else {
+        ConnectionMode::Direct
+    };
 
-    info!(
-        "Starting to listen with stream_port: {}, tcp_port: {}",
-        net_info.stream_port, net_info.tcp_port
-    );
+    let target_ip = match connection_mode {
+        ConnectionMode::Direct => streamer_ip,
+        ConnectionMode::Iroh { .. } => "127.0.0.1".to_string(),
+    };
+
+    let net_info = NetInfo::parse_info(stream_port, tcp_port, target_ip, connection_mode)
+        .map_err(|error| format!("Parsing net info from frontend error: {error:?}"))?;
 
     let (sender, receiver) = channel::<StopWatchingEvent>();
 
-    *state.stop_watching_sender.lock().unwrap() = Some(sender.clone());
+    *state.stop_watching_sender.lock().await = Some(sender.clone());
 
     #[cfg(target_os = "windows")]
-    let client = WindowsClient::new(net_info, sender, receiver);
+    let mut client = WindowsClient::new(net_info, sender, receiver);
 
     #[cfg(target_os = "linux")]
     let client = PipewireClient::new(net_info);
 
-    std::thread::spawn(move || {
-        match client.receive() {
-            Ok(()) => {}
-            Err(e) => {
-                if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                    if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
-                        app.emit("server-not-streaming", ()).unwrap();
+    tokio::spawn(async move {
+        {
+            match client.receive().await {
+                Ok(()) => {}
+                Err(e) => {
+                    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
+                        if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
+                            app.emit("server-not-streaming", ()).unwrap();
+                        } else {
+                            error!("Client error: {:?}", e);
+                            app.emit("streaming-stopped", ()).unwrap();
+                        }
                     } else {
                         error!("Client error: {:?}", e);
                         app.emit("streaming-stopped", ()).unwrap();
                     }
-                } else {
-                    error!("Client error: {:?}", e);
-                    app.emit("streaming-stopped", ()).unwrap();
                 }
-            }
-        };
-        app.emit("streaming-stopped", ()).unwrap();
+            };
+            app.emit("streaming-stopped", ()).unwrap();
+        }
     });
+
+    Ok(())
 }
 
 #[tauri::command]
-pub fn stop_watching(state: tauri::State<AppState>) {
-    if let Some(sender) = state.stop_watching_sender.lock().unwrap().as_ref() {
+pub async fn stop_watching(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    if let Some(sender) = state.stop_watching_sender.lock().await.as_ref() {
         sender
             .send(StopWatchingEvent::ClientStop)
             .expect("Failed to send client stop event");
     }
     info!("Called stop watching");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn generate_ticket(state: tauri::State<'_, AppState>) -> Result<EndpointTicket, String> {
+    let (ticket, endpoint) = streaming_server::network::iroh::generate_ticket()
+        .await
+        .expect("Failed to generate ticket/endpoint");
+
+    *state.iroh_info.lock().await = Some(IrohInfo::new(ticket.clone(), endpoint.clone()));
+
+    return Ok(ticket);
 }
 
 fn map_windows_settings(frontend_settings: &VideoSettings) -> WindowsStreamingSettings {
@@ -209,4 +269,13 @@ fn map_windows_settings(frontend_settings: &VideoSettings) -> WindowsStreamingSe
     windows_settings.scaling_method = frontend_settings.scaling_method;
 
     windows_settings
+}
+
+fn get_connection_mode(connection_mode: ConnectionModeFrontend) -> ConnectionMode {
+    match connection_mode {
+        ConnectionModeFrontend::Direct => ConnectionMode::Direct,
+        ConnectionModeFrontend::Iroh => ConnectionMode::Iroh {
+            info: IrohInfo::default(),
+        },
+    }
 }

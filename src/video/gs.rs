@@ -1,14 +1,17 @@
+use std::io::sink;
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use gstreamer::{self as gst};
-use gstreamer::{Pipeline, prelude::*};
-use gstreamer_app::AppSrc;
+use gstreamer as gst;
+use gstreamer::{prelude::*, Pipeline};
+use gstreamer_app::{AppSink, AppSrc};
 use tracing::{error, info, warn};
 use winit::platform::windows;
 
 use crate::video::windows_impl::windows_streaming_settings::WindowsStreamingSettings;
+
+static APPSRC_NAME: &str = "src";
 
 pub fn start_screen_stream(
     node_id: u32,
@@ -257,7 +260,7 @@ pub fn create_windows_pipeline(
     scaled_height = (scaled_height) & !1;
 
     let pipeline_description = format!(
-        "appsrc name=src is-live=true format=time \
+        "appsrc name={} is-live=true format=time \
      caps=video/x-raw,format=BGRA,width={},height={} ! \
      videoscale method={} add-borders=true ! \
      video/x-raw,width={},height={} ! \
@@ -268,6 +271,7 @@ pub fn create_windows_pipeline(
      h264parse ! \
      rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
      udpsink host={} port={} sync=false async=false",
+        APPSRC_NAME,
         width,
         height,
         video_scale_method,
@@ -284,10 +288,115 @@ pub fn create_windows_pipeline(
         .expect("Failed to downcast to Pipeline")
 }
 
-pub fn create_app_src(pipeline: &Pipeline) -> AppSrc {
+pub fn create_windows_pipeline_with_app_dest(
+    width: u32,
+    height: u32,
+    windows_settings: &WindowsStreamingSettings,
+) -> Pipeline {
+    let video_scale_method = windows_settings.scaling_method.as_gst_method();
+    let aspect_ratio = width as f32 / height as f32;
+
+    let max_height = windows_settings.resolution as f32;
+    let max_width = aspect_ratio * max_height;
+
+    let mut scaled_height = height;
+    let mut scaled_width = width;
+
+    if height as f32 > max_height {
+        scaled_height = max_height as u32;
+        scaled_width = (height as f32 * aspect_ratio) as u32;
+    } else if width as f32 > max_width {
+        scaled_width = max_width as u32;
+        scaled_height = (width as f32 * aspect_ratio) as u32;
+    }
+
+    // Round to even for H.264
+    scaled_width = (scaled_width) & !1;
+    scaled_height = (scaled_height) & !1;
+
+    let pipeline_description = format!(
+        "appsrc name={} is-live=true format=time \
+     caps=video/x-raw,format=BGRA,width={},height={} ! \
+     videoscale method={} add-borders=true ! \
+     video/x-raw,width={},height={} ! \
+     videoconvert ! \
+     video/x-raw,format=NV12 ! \
+     mfh264enc bitrate={} ! \
+     video/x-h264,profile=high ! \
+     h264parse ! \
+     rtph264pay config-interval=-1 pt=96 mtu=1400 ! \
+     appsink name=rtp_sink sync=false async=false",
+        APPSRC_NAME,
+        width,
+        height,
+        video_scale_method,
+        scaled_width,
+        scaled_height,
+        windows_settings.bitrate,
+    );
+
+    gstreamer::parse::launch(&pipeline_description)
+        .expect("Failed to create pipeline")
+        .downcast::<gstreamer::Pipeline>()
+        .expect("Failed to downcast to Pipeline")
+}
+
+pub fn get_app_src(pipeline: &Pipeline) -> AppSrc {
     pipeline
         .by_name("src")
         .expect("Failed to find appsrc element")
         .downcast::<AppSrc>()
         .expect("Failed to downcast to AppSrc")
+}
+
+pub fn get_app_sink(pipeline: &Pipeline, sink_name: &str) -> AppSink {
+    pipeline
+        .by_name(sink_name)
+        .expect(&format!(
+            "Failed to find appsink element, with name: {}",
+            sink_name
+        ))
+        .downcast::<AppSink>()
+        .expect("Failed to downcast to AppSink")
+}
+
+pub fn build_client_udp_pipeline(streaming_port: u16) -> Pipeline {
+    let pipeline_description = format!(
+        "\
+            udpsrc port={} buffer-size=8388608 ! \
+            application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96 ! \
+            rtpjitterbuffer latency=200 ! \
+            queue leaky=downstream max-size-time=1000000000 ! \
+            rtph264depay ! \
+            h264parse ! \
+            d3d11h264dec ! \
+            queue leaky=downstream max-size-time=500000000 ! \
+            d3d11videosink sync=false",
+        streaming_port
+    );
+    info!("Streaming port: {}", streaming_port);
+
+    let pipeline =
+        gst::parse::launch(&pipeline_description).expect("Failed to launch client udp pipeline");
+    pipeline.downcast::<gst::Pipeline>().unwrap()
+}
+
+pub fn build_client_iroh_pipeline() -> Pipeline {
+    let pipeline_description = format!(
+        "\
+        appsrc name={} max-bytes=8388608 block=false leaky-type=downstream format=time is-live=true do-timestamp=true ! \
+        application/x-rtp,media=video,clock-rate=90000,encoding-name=H264,payload=96 ! \
+        rtpjitterbuffer latency=200 ! \
+        queue leaky=downstream max-size-time=1000000000 ! \
+        rtph264depay ! \
+        h264parse ! \
+        d3d11h264dec ! \
+        queue leaky=downstream max-size-time=500000000 ! \
+        d3d11videosink sync=false",
+        APPSRC_NAME
+    );
+
+    let pipeline =
+        gst::parse::launch(&pipeline_description).expect("Failed to launch client iroh pipeline");
+    pipeline.downcast::<gst::Pipeline>().unwrap()
 }

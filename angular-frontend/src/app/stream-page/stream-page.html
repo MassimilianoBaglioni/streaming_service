@@ -18,32 +18,136 @@
   <ng-container *ngIf="mode === 'streaming'">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Watcher Configuration</span>
+        <span class="card-title">Connection Mode</span>
       </div>
 
-      <div class="field" [formGroup]="streamForm">
-        <span class="field-label">Watcher Address</span>
-        <input class="field-input" placeholder="127.0.0.1" formControlName="watcherAddress" />
+      <div class="connection-mode">
+        <div
+          class="connection-card"
+          [class.active]="connectionMode === 'direct'"
+          (click)="setConnectionMode('direct')"
+        >
+          <div class="connection-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+              <path d="M7.76 10.15a7 7 0 0 1 8.48 0" />
+              <path d="M10.59 7.98a3 3 0 0 1 2.82 0" />
+              <path d="M12 17.5a1 1 0 0 1 0-2 1 1 0 0 1 0 2z" />
+            </svg>
+          </div>
+          <span class="connection-label">Direct IP</span>
+        </div>
+
+        <div
+          class="connection-card"
+          [class.active]="connectionMode === 'invite'"
+          (click)="setConnectionMode('invite')"
+        >
+          <div class="connection-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.41 1.41" />
+              <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.93a5 5 0 0 0 7.07 7.07l1.41-1.41" />
+            </svg>
+          </div>
+          <span class="connection-label">Invite link</span>
+        </div>
+      </div>
+
+      <div class="connection-caption">
+        <span>Select how your watcher connects to the stream.</span>
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Port Configuration</span>
-      </div>
-
-      <div class="two-col" [formGroup]="streamForm">
-        <div class="field">
-          <span class="field-label">TCP Socket Port</span>
-          <input class="field-input" placeholder="5000" formControlName="tcpPort" />
+    <ng-container *ngIf="connectionMode === 'direct'">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Watcher Configuration</span>
         </div>
 
-        <div class="field">
-          <span class="field-label">Streaming Pipeline Port</span>
-          <input class="field-input" placeholder="8000" formControlName="streamPort" />
+        <div class="field" [formGroup]="streamForm">
+          <span class="field-label">Watcher Address</span>
+          <input class="field-input" placeholder="127.0.0.1" formControlName="watcherAddress" />
         </div>
       </div>
-    </div>
+    </ng-container>
+
+    <ng-container *ngIf="connectionMode === 'invite'">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Invite Link</span>
+        </div>
+        <div class="invite-row">
+          <span class="invite-text" [class.placeholder]="!inviteTicket">
+            {{ inviteTicket ?? 'Click generate to create an invite link' }}
+          </span>
+          <div class="invite-actions">
+            <button class="icon-btn" [disabled]="!inviteTicket" (click)="copyTicket()">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+            <button
+              class="btn btn-primary"
+              [disabled]="isGeneratingTicket"
+              (click)="generateTicket()"
+            >
+              {{ isGeneratingTicket ? 'Generating...' : 'Generate' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </ng-container>
+
+    <ng-container *ngIf="connectionMode === 'direct'">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Port Configuration</span>
+        </div>
+
+        <div class="two-col" [formGroup]="streamForm">
+          <div class="field">
+            <span class="field-label">TCP Socket Port</span>
+            <input class="field-input" placeholder="5000" formControlName="tcpPort" />
+          </div>
+
+          <div class="field">
+            <span class="field-label">Streaming Pipeline Port</span>
+            <input class="field-input" placeholder="8000" formControlName="streamPort" />
+          </div>
+        </div>
+      </div>
+    </ng-container>
 
     <div class="card">
       <div class="card-header">
@@ -101,14 +205,95 @@
   <ng-container *ngIf="mode === 'watching'">
     <div class="card">
       <div class="card-header">
-        <span class="card-title">Streamer Configuration</span>
+        <span class="card-title">Connection Mode</span>
       </div>
 
-      <div class="field" [formGroup]="watchForm">
-        <span class="field-label">Streamer Address</span>
-        <input class="field-input" placeholder="127.0.0.1" formControlName="streamerAddress" />
+      <div class="connection-mode">
+        <div
+          class="connection-card"
+          [class.active]="watchConnectionMode === 'direct'"
+          (click)="setWatchConnectionMode('direct')"
+        >
+          <div class="connection-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+              <path d="M7.76 10.15a7 7 0 0 1 8.48 0" />
+              <path d="M10.59 7.98a3 3 0 0 1 2.82 0" />
+              <path d="M12 17.5a1 1 0 0 1 0-2 1 1 0 0 1 0 2z" />
+            </svg>
+          </div>
+          <span class="connection-label">Direct IP</span>
+        </div>
+
+        <div
+          class="connection-card"
+          [class.active]="watchConnectionMode === 'invite'"
+          (click)="setWatchConnectionMode('invite')"
+        >
+          <div class="connection-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07l-1.41 1.41" />
+              <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.93a5 5 0 0 0 7.07 7.07l1.41-1.41" />
+            </svg>
+          </div>
+          <span class="connection-label">Invite link</span>
+        </div>
+      </div>
+
+      <div class="connection-caption">
+        <span>Select how you connect to the streamer.</span>
       </div>
     </div>
+
+    <ng-container *ngIf="watchConnectionMode === 'direct'">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Streamer Configuration</span>
+        </div>
+
+        <div class="field" [formGroup]="watchForm">
+          <span class="field-label">Streamer Address</span>
+          <input class="field-input" placeholder="127.0.0.1" formControlName="streamerAddress" />
+        </div>
+      </div>
+    </ng-container>
+
+    <ng-container *ngIf="watchConnectionMode === 'invite'">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Invite Link</span>
+        </div>
+
+        <div class="field" [formGroup]="watchForm">
+          <span class="field-label">Invite Link</span>
+          <input
+            class="field-input"
+            placeholder="Paste the invite link here"
+            formControlName="inviteLink"
+          />
+        </div>
+      </div>
+    </ng-container>
 
     <div class="card">
       <div class="card-header">
