@@ -1,23 +1,19 @@
-use std::{str::FromStr, sync::mpsc::channel};
+use std::str::FromStr;
 
 use crate::state::app_state::AppState;
 use ::iroh::{endpoint::presets, Endpoint};
 use iroh_tickets::endpoint::EndpointTicket;
 use serde::Deserialize;
-use streaming_server::network::iroh;
 #[cfg(target_os = "windows")]
 use streaming_server::{
     network::{iroh::IrohInfo, ConnectionMode, NetInfo},
     video::{
-        commons::scaling_method::ScalingMethod,
-        video_source::VideoSourceKind,
-        windows_impl::{
-            client::windows_client::StopWatchingEvent,
-            windows_streaming_settings::WindowsStreamingSettings,
-        },
+        commons::scaling_method::ScalingMethod, video_source::VideoSourceKind,
+        windows_impl::windows_streaming_settings::WindowsStreamingSettings,
     },
 };
 use tauri::{AppHandle, Emitter};
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 #[cfg(target_os = "windows")]
 use {
@@ -42,6 +38,7 @@ pub enum ConnectionModeFrontend {
     Iroh,
 }
 
+use streaming_server::network::streaming_event::StreamingEvent;
 #[cfg(target_os = "linux")]
 use {
     crate::linux_impl::get_wayland_handles,
@@ -110,8 +107,7 @@ pub async fn start_streaming(
      *   TODO this is trash actually. We only set the values inside the state when we press the generate ticket button from the ui instead of passing it.
      */
 
-    if is_direct {
-    } else {
+    if !is_direct {
         let iroh_info = state.iroh_info.lock().await.clone().unwrap();
         net_info.connection_mode = ConnectionMode::Iroh { info: iroh_info };
     }
@@ -188,6 +184,7 @@ pub async fn start_watching(
             .expect("Failed to create endpoint");
         let parsed_ticket = EndpointTicket::from_str(ticket.trim())
             .map_err(|error| format!("Invalid invite link: {error}"))?;
+
         ConnectionMode::Iroh {
             info: IrohInfo::new(parsed_ticket, endpoint),
         }
@@ -203,7 +200,7 @@ pub async fn start_watching(
     let net_info = NetInfo::parse_info(stream_port, tcp_port, target_ip, connection_mode)
         .map_err(|error| format!("Parsing net info from frontend error: {error:?}"))?;
 
-    let (sender, receiver) = channel::<StopWatchingEvent>();
+    let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
 
     *state.stop_watching_sender.lock().await = Some(sender.clone());
 
@@ -242,7 +239,8 @@ pub async fn start_watching(
 pub async fn stop_watching(state: tauri::State<'_, AppState>) -> Result<(), String> {
     if let Some(sender) = state.stop_watching_sender.lock().await.as_ref() {
         sender
-            .send(StopWatchingEvent::ClientStop)
+            .send(StreamingEvent::ClientQuit)
+            .await
             .expect("Failed to send client stop event");
     }
     info!("Called stop watching");

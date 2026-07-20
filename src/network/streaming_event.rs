@@ -2,5 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum StreamingEvent {
-    End,
+    ClientQuit,
+    ServerEndsStream,
+    GenericError,
 }

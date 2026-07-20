@@ -2,7 +2,6 @@ pub mod gs;
 
 pub mod commons;
 pub mod spectator_client;
-pub mod utilities;
 pub mod video_source;
 
 #[cfg(target_os = "windows")]

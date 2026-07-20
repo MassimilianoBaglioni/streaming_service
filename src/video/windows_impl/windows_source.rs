@@ -15,6 +15,7 @@ use crate::{
 };
 use gstreamer::prelude::ElementExt;
 use gstreamer::Sample;
+use gstreamer_app::{AppSink, AppSrc};
 use tracing::{error, info, warn};
 use windows::{
     core::{IInspectable, Interface, Ref},
@@ -196,6 +197,95 @@ impl WindowsSource {
         }
         let staging_texture = staging_texture.unwrap();
 
+        self.init_pipeline(is_direct, width, height);
+
+        let target_frame_interval =
+            std::time::Duration::from_secs_f64(1.0 / self.windows_settings.fps as f64);
+
+        let frame_handler = FrameArrivedHandler {
+            app_src: self.app_src.as_ref().unwrap().clone(),
+            context,
+            staging_texture,
+            pixel_format,
+            target_frame_interval,
+            last_frame_nanos: Arc::new(AtomicU64::new(0)),
+        };
+
+        let last_frame_nanos = Arc::new(AtomicU64::new(0));
+        let last_clone = last_frame_nanos.clone();
+
+        let handler = TypedEventHandler::new(
+            move |sender: Ref<Direct3D11CaptureFramePool>, args: Ref<IInspectable>| {
+                frame_handler.on_frame_arrived(sender, args)
+            },
+        );
+
+        let session = frame_pool
+            .CreateCaptureSession(&capture_item)
+            .expect("Capture session creation failed");
+
+        session.StartCapture().expect("Error starting capture");
+
+        self.pipeline
+            .as_mut()
+            .unwrap()
+            .set_state(gstreamer::State::Playing)
+            .expect("Failed to set pipeline to Playing");
+
+        if (!is_direct) {
+            // This code must be always after starting the pipeline because we need a playing pipeline to pull, otherwise we get errors
+            let app_sink_clone = self.app_sink.clone();
+
+            WindowsSource::start_sending_frames_iroh(
+                app_sink_clone.unwrap(),
+                self.connection.clone().unwrap(),
+            );
+        }
+
+        let token: i64 = frame_pool
+            .FrameArrived(&handler)
+            .expect("Error registering handler");
+
+        self.save_to_keep_alive(frame_pool, session, token);
+        info!("Capture started");
+    }
+
+    fn save_to_keep_alive(
+        &mut self,
+        frame_pool: Direct3D11CaptureFramePool,
+        capture_session: GraphicsCaptureSession,
+        token: i64,
+    ) {
+        self.frame_pool = Some(SendWrapper::new(frame_pool));
+        self.graphics_capture_session = Some(SendWrapper::new(capture_session));
+        self.token = Some(token);
+    }
+
+    fn start_sending_frames_iroh(app_sink: Arc<AppSink>, connection: Arc<Mutex<ServerConnection>>) {
+        let (sender, receiver) = tokio::sync::mpsc::channel::<Sample>(32);
+
+        let frame_sender_thread_handle = tokio::task::spawn_blocking(move || {
+            loop {
+                match app_sink.pull_sample() {
+                    Ok(sample) => {
+                        if sender.blocking_send(sample).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        warn!("Error on receiving the sample, before sending");
+                    }
+                }
+            }
+        });
+
+        let iroh_sender_task_handle = tokio::task::spawn(async move {
+            connection.lock().await.send_frames_iroh(receiver).await;
+        });
+    }
+
+    fn init_pipeline(&mut self, is_direct: bool, width: u32, height: u32) {
         if is_direct {
             info!(
                 "host_ip: {:?}, port: {:?}",
@@ -224,198 +314,6 @@ impl WindowsSource {
         }
 
         self.app_src = Some(Arc::new(gs::get_app_src(self.pipeline.as_ref().unwrap())));
-
-        let app_src_clone = self.app_src.clone();
-
-        let target_frame_interval =
-            std::time::Duration::from_secs_f64(1.0 / self.windows_settings.fps as f64);
-
-        let last_frame_nanos = Arc::new(AtomicU64::new(0));
-        let last_clone = last_frame_nanos.clone();
-
-        let handler = TypedEventHandler::new(
-            move |sender: Ref<Direct3D11CaptureFramePool>, _args: Ref<IInspectable>| {
-                let frame_pool = sender.unwrap();
-                let Ok(frame) = frame_pool.TryGetNextFrame() else {
-                    return Ok(());
-                };
-
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64;
-                let last = last_clone.load(Ordering::Relaxed);
-                let interval_nanos = target_frame_interval.as_nanos() as u64;
-
-                if now - last < interval_nanos {
-                    return Ok(());
-                }
-                last_clone.store(now, Ordering::Relaxed);
-
-                let size = match frame.ContentSize() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("ContentSize failed: {:?}", e);
-                        return Ok(());
-                    }
-                };
-                let appsrc = app_src_clone.clone();
-
-                // A surface is an interface to the texture stored in VRAM. The lines below copy the data from VRAM to RAM for the CPU.
-                let surface = match frame.Surface() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Surface failed: {:?}", e);
-                        return Ok(());
-                    }
-                };
-
-                let dxgi_access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
-                    Ok(a) => a,
-                    Err(e) => {
-                        error!("Cast to IDirect3DDxgiInterfaceAccess failed: {:?}", e);
-                        return Ok(());
-                    }
-                };
-
-                // get the capture texture as ID3D11Texture2D
-                let capture_texture: ID3D11Texture2D = match unsafe { dxgi_access.GetInterface() } {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("GetInterface texture failed: {:?}", e);
-                        return Ok(());
-                    }
-                };
-
-                // copy from GPU-only capture texture → staging texture (CPU accessible)
-                unsafe { context.CopyResource(&staging_texture, &capture_texture) };
-
-                // map the STAGING texture, not the capture texture
-                let dxgi_staging: IDXGISurface = match staging_texture.cast() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Staging cast failed: {:?}", e);
-                        return Ok(());
-                    }
-                };
-
-                let mut mapped_rect = DXGI_MAPPED_RECT::default();
-                if let Err(e) = unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ) } {
-                    error!("Map failed: {:?}", e);
-                    return Ok(());
-                }
-
-                let pitch = mapped_rect.Pitch as usize;
-                let data_ptr = mapped_rect.pBits;
-
-                let width = size.Width as usize;
-                let height = size.Height as usize;
-                let bytes_per_pixel = match pixel_format {
-                    DirectXPixelFormat::B8G8R8A8UIntNormalized => 4,
-                    DirectXPixelFormat::R16G16B16A16Float => 8,
-                    _ => panic!("Unsupported pixel format"),
-                };
-                let row_size = width * bytes_per_pixel;
-                let total_size = row_size * height;
-
-                // Gstreamer has an intenrla buffers pooling, this is not an allocation per iteration, no optimization needed.
-                let mut gst_buffer = gstreamer::Buffer::with_size(total_size)
-                    .expect("Failed to allocate the gstreamer buffer");
-
-                {
-                    let buffer_ref = gst_buffer.get_mut().unwrap();
-
-                    let timestamp = frame
-                        .SystemRelativeTime()
-                        .expect("Error on systemRelative")
-                        .Duration;
-
-                    // Set the timestamp for gstreamer, we are taking the timestamp from windows above
-                    buffer_ref.set_pts(gstreamer::ClockTime::from_nseconds(timestamp as u64 * 100));
-
-                    let mut map = buffer_ref
-                        .map_writable()
-                        .expect("Failed to map GStreamer buffer");
-                    let dst = map.as_mut_slice();
-
-                    for row in 0..height {
-                        let src_offset = row * pitch;
-                        let dst_offset = row * row_size;
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                data_ptr.add(src_offset),
-                                dst.as_mut_ptr().add(dst_offset),
-                                row_size,
-                            );
-                        }
-                    }
-                }
-
-                unsafe { dxgi_staging.Unmap().expect("Unmap failed") };
-
-                appsrc
-                    .unwrap()
-                    .push_buffer(gst_buffer)
-                    .expect("Failed to push buffer");
-                Ok(())
-            },
-        );
-
-        let token: i64 = frame_pool
-            .FrameArrived(&handler)
-            .expect("Error registering handler");
-
-        let session = frame_pool
-            .CreateCaptureSession(&capture_item)
-            .expect("Capture session creation failed");
-
-        session.StartCapture().expect("Error starting capture");
-
-        self.pipeline
-            .as_mut()
-            .unwrap()
-            .set_state(gstreamer::State::Playing)
-            .expect("Failed to set pipeline to Playing");
-        // store to keep alive
-        self.frame_pool = Some(SendWrapper::new(frame_pool));
-        self.graphics_capture_session = Some(SendWrapper::new(session));
-        self.token = Some(token);
-
-        if (!is_direct) {
-            // Doing this here becase we need a playing pipeline to pull, otherwise we get errors
-            let app_sink_clone = self.app_sink.clone();
-
-            let (sender, receiver) = tokio::sync::mpsc::channel::<Sample>(32);
-
-            let frame_sender_thread_handle = tokio::task::spawn_blocking(move || {
-                let app_sink = app_sink_clone.unwrap();
-                loop {
-                    match app_sink.pull_sample() {
-                        Ok(sample) => {
-                            if sender.blocking_send(sample).is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            error!("{:?}", e);
-                            warn!("Error on receiving the sample, before sending");
-                        }
-                    }
-                }
-            });
-
-            let connection_clone = self.connection.clone().unwrap();
-
-            let iroh_sender_task_handle = tokio::task::spawn(async move {
-                connection_clone
-                    .lock()
-                    .await
-                    .send_frames_iroh(receiver)
-                    .await;
-            });
-        }
-
-        info!("Capture started");
     }
 
     pub async fn stop_streaming(&mut self) {
@@ -482,4 +380,145 @@ pub fn create_windows_video_source(
         windows_streaming_settings,
         net_info.connection_mode.clone(),
     ))))
+}
+
+struct FrameArrivedHandler {
+    app_src: Arc<AppSrc>,
+    context: ID3D11DeviceContext,
+    staging_texture: ID3D11Texture2D,
+    pixel_format: DirectXPixelFormat,
+    target_frame_interval: std::time::Duration,
+    last_frame_nanos: Arc<AtomicU64>,
+}
+
+impl FrameArrivedHandler {
+    fn on_frame_arrived(
+        &self,
+        sender: Ref<Direct3D11CaptureFramePool>,
+        _args: Ref<IInspectable>,
+    ) -> windows::core::Result<()> {
+        let frame_pool = sender.unwrap();
+        let Ok(frame) = frame_pool.TryGetNextFrame() else {
+            return Ok(());
+        };
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        let last = self.last_frame_nanos.load(Ordering::Relaxed);
+        let interval_nanos = self.target_frame_interval.as_nanos() as u64;
+
+        if now - last < interval_nanos {
+            return Ok(());
+        }
+        self.last_frame_nanos.store(now, Ordering::Relaxed);
+
+        let size = match frame.ContentSize() {
+            Ok(s) => s,
+            Err(e) => {
+                error!("ContentSize failed: {:?}", e);
+                return Ok(());
+            }
+        };
+
+        // A surface is an interface to the texture stored in VRAM. The lines below copy the data from VRAM to RAM for the CPU.
+        let surface = match frame.Surface() {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Surface failed: {:?}", e);
+                return Ok(());
+            }
+        };
+
+        let dxgi_access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
+            Ok(a) => a,
+            Err(e) => {
+                error!("Cast to IDirect3DDxgiInterfaceAccess failed: {:?}", e);
+                return Ok(());
+            }
+        };
+
+        let capture_texture: ID3D11Texture2D = match unsafe { dxgi_access.GetInterface() } {
+            Ok(t) => t,
+            Err(e) => {
+                error!("GetInterface texture failed: {:?}", e);
+                return Ok(());
+            }
+        };
+
+        // copy from GPU-only capture texture → staging texture (CPU accessible)
+        unsafe {
+            self.context
+                .CopyResource(&self.staging_texture, &capture_texture)
+        };
+
+        // map the STAGING texture, not the capture texture
+        let dxgi_staging: IDXGISurface = match self.staging_texture.cast() {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Staging cast failed: {:?}", e);
+                return Ok(());
+            }
+        };
+
+        let mut mapped_rect = DXGI_MAPPED_RECT::default();
+        if let Err(e) = unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ) } {
+            error!("Map failed: {:?}", e);
+            return Ok(());
+        }
+
+        let pitch = mapped_rect.Pitch as usize;
+        let data_ptr = mapped_rect.pBits;
+
+        let width = size.Width as usize;
+        let height = size.Height as usize;
+        let bytes_per_pixel = match self.pixel_format {
+            DirectXPixelFormat::B8G8R8A8UIntNormalized => 4,
+            DirectXPixelFormat::R16G16B16A16Float => 8,
+            _ => panic!("Unsupported pixel format"),
+        };
+        let row_size = width * bytes_per_pixel;
+        let total_size = row_size * height;
+
+        // Gstreamer has an internal buffers pooling, this is not an allocation per iteration, no optimization needed.
+        let mut gst_buffer = gstreamer::Buffer::with_size(total_size)
+            .expect("Failed to allocate the gstreamer buffer");
+
+        {
+            let buffer_ref = gst_buffer.get_mut().unwrap();
+
+            // let timestamp = frame
+            //     .SystemRelativeTime()
+            //     .expect("Error on systemRelative")
+            //     .Duration;
+            // 
+            // buffer_ref.set_pts(gstreamer::ClockTime::from_nseconds(timestamp as u64 * 100));
+
+            let mut map = buffer_ref
+                .map_writable()
+                .expect("Failed to map GStreamer buffer");
+            let dst = map.as_mut_slice();
+
+            for row in 0..height {
+                let src_offset = row * pitch;
+                let dst_offset = row * row_size;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        data_ptr.add(src_offset),
+                        dst.as_mut_ptr().add(dst_offset),
+                        row_size,
+                    );
+                }
+            }
+        }
+
+        unsafe { dxgi_staging.Unmap().expect("Unmap failed") };
+
+        self.app_src
+            .push_buffer(gst_buffer)
+            .expect("Failed to push buffer");
+
+        Ok(())
+    }
 }
