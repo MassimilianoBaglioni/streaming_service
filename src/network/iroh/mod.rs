@@ -1,8 +1,5 @@
 use anyhow::Result;
-use iroh::{
-    endpoint::presets,
-    Endpoint,
-};
+use iroh::{endpoint::presets, Endpoint};
 use iroh_tickets::endpoint::EndpointTicket;
 use std::str::FromStr;
 
@@ -32,7 +29,7 @@ impl Default for IrohInfo {
     }
 }
 
-const ALPN: &[u8] = b"myapp/test/1";
+pub(crate) const ALPN: &[u8] = b"myapp/test/1";
 
 pub async fn run_receiver() -> Result<()> {
     let (ticket, endpoint) = generate_ticket()

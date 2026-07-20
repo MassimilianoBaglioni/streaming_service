@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{net::Ipv4Addr, ptr::null_mut};
 use tokio::sync::Mutex;
 
-use crate::network::iroh::connection::ServerConnection;
+use crate::network::server_connection::ServerConnection;
 use crate::network::ConnectionMode;
 use crate::{
     network::NetInfo,
