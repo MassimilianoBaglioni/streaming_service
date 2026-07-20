@@ -1,4 +1,3 @@
-use std::io::sink;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -7,7 +6,6 @@ use gstreamer as gst;
 use gstreamer::{prelude::*, Pipeline};
 use gstreamer_app::{AppSink, AppSrc};
 use tracing::{error, info, warn};
-use winit::platform::windows;
 
 use crate::video::windows_impl::windows_streaming_settings::WindowsStreamingSettings;
 
@@ -260,7 +258,7 @@ pub fn create_windows_pipeline(
     scaled_height = (scaled_height) & !1;
 
     let pipeline_description = format!(
-        "appsrc name={} is-live=true format=time \
+        "appsrc name={} is-live=true do-timestamp=true format=time \
      caps=video/x-raw,format=BGRA,width={},height={} ! \
      videoscale method={} add-borders=true ! \
      video/x-raw,width={},height={} ! \
@@ -281,6 +279,8 @@ pub fn create_windows_pipeline(
         host,
         port,
     );
+
+    info!("Server pipeline description: {}", pipeline_description);
 
     gstreamer::parse::launch(&pipeline_description)
         .expect("Failed to create pipeline")
@@ -315,7 +315,7 @@ pub fn create_windows_pipeline_with_app_dest(
     scaled_height = (scaled_height) & !1;
 
     let pipeline_description = format!(
-        "appsrc name={} is-live=true format=time \
+        "appsrc name={} is-live=true do-timestamp=true format=time \
      caps=video/x-raw,format=BGRA,width={},height={} ! \
      videoscale method={} add-borders=true ! \
      video/x-raw,width={},height={} ! \

@@ -1,16 +1,16 @@
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 use streaming_server::network::iroh::IrohInfo;
+use streaming_server::network::streaming_event::StreamingEvent;
 use streaming_server::video::video_source::VideoSourceKind;
-use streaming_server::video::windows_impl::client::windows_client::StopWatchingEvent;
 
 pub struct AppState {
     pub client_receiving_handler: Mutex<Option<JoinHandle<()>>>,
     pub video_source: Mutex<Option<Arc<Mutex<VideoSourceKind>>>>,
-    pub stop_watching_sender: Mutex<Option<Sender<StopWatchingEvent>>>,
+    pub stop_watching_sender: Mutex<Option<Sender<StreamingEvent>>>,
     pub iroh_info: Mutex<Option<IrohInfo>>,
 }
 

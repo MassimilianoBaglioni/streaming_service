@@ -3,14 +3,13 @@ pub mod streaming_event;
 pub mod streaming_events_client;
 pub mod streaming_events_server;
 
+use crate::network::iroh::IrohInfo;
+use crate::video::gs::{build_client_iroh_pipeline, build_client_udp_pipeline};
+use gstreamer::Pipeline;
 use std::{
     net::{AddrParseError, Ipv4Addr},
     num::ParseIntError,
 };
-
-use crate::network::iroh::IrohInfo;
-use ::iroh::{endpoint::Connection, Endpoint};
-use iroh_tickets::endpoint::EndpointTicket;
 use tracing::warn;
 
 #[derive(Debug)]
@@ -62,6 +61,13 @@ impl NetInfo {
             target_ip,
             connection_mode,
         })
+    }
+
+    pub fn build_pipeline(&mut self) -> Pipeline {
+        match &self.connection_mode {
+            crate::network::ConnectionMode::Direct => build_client_udp_pipeline(self.stream_port),
+            crate::network::ConnectionMode::Iroh { info } => build_client_iroh_pipeline(),
+        }
     }
 }
 

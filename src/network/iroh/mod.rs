@@ -4,7 +4,6 @@ use iroh::{
     Endpoint,
 };
 use iroh_tickets::endpoint::EndpointTicket;
-use serde::Deserialize;
 use std::str::FromStr;
 
 pub mod connection;
