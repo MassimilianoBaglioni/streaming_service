@@ -8,10 +8,10 @@ pub mod windows_impl;
 
 pub mod client;
 
-use crate::commands::streaming::{
-    start_streaming_direct, start_streaming_iroh, start_watching_direct, start_watching_iroh,
+use crate::commands::streamer_commands::{
+    generate_ticket, start_streaming_direct, start_streaming_iroh, stop_streaming,
 };
-use commands::streaming::{generate_ticket, stop_streaming, stop_watching};
+use crate::commands::viewer_commands::{start_watching_direct, start_watching_iroh, stop_watching};
 use state::app_state::AppState;
 use streaming_server::gstreamer as gst;
 use tracing::Level;
