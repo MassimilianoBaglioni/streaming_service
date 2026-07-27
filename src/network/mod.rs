@@ -23,10 +23,10 @@ pub enum ParseError {
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionBuildError {
     #[error("invalid port: {0}")]
-    InvalidPort(#[from] std::num::ParseIntError),
+    InvalidPort(#[from] ParseIntError),
 
     #[error("invalid ip: {0}")]
-    InvalidIp(#[from] std::net::AddrParseError),
+    InvalidIp(#[from] AddrParseError),
 
     #[error("invalid invite link: {0}")]
     InvalidTicket(String),

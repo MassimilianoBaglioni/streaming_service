@@ -77,7 +77,7 @@ pub fn start_streaming(
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn start_streaming_direct(
-    state: tauri::State<'_, AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
     watcher_stream_port: String,
     watcher_address: String,
@@ -95,7 +95,7 @@ pub async fn start_streaming_direct(
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn start_streaming_iroh(
-    state: tauri::State<'_, AppState>,
+    state: State<'_, AppState>,
     app: AppHandle,
     video_settings: VideoSettings,
 ) -> Result<(), String> {
@@ -161,7 +161,7 @@ async fn start_streaming(
 }
 
 #[tauri::command]
-pub async fn stop_streaming(state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
     // TODO check that we close the tcp sockets when stop streaming or stop watching are called
     if let Some(video_source) = state.video_source.lock().await.as_ref() {
         let mut vs = video_source.lock().await;
@@ -185,7 +185,7 @@ pub async fn stop_streaming(state: tauri::State<'_, AppState>) -> Result<(), Str
 #[tauri::command]
 pub async fn start_watching_direct(
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: State<'_, AppState>,
     stream_port: String,
     tcp_port: String,
     streamer_ip: String,
@@ -202,7 +202,7 @@ pub async fn start_watching_direct(
 #[tauri::command]
 pub async fn start_watching_iroh(
     app: AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: State<'_, AppState>,
     ticket: Option<String>,
 ) -> Result<(), String> {
     let connection_build_info = ConnectionBuildInfo::from_ticket(ticket.unwrap().parse().unwrap())
@@ -253,7 +253,7 @@ async fn start_watching(
 }
 
 #[tauri::command]
-pub async fn stop_watching(state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_watching(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(sender) = state.stop_watching_sender.lock().await.as_ref() {
         sender
             .send(StreamingEvent::ClientQuit)
@@ -265,7 +265,7 @@ pub async fn stop_watching(state: tauri::State<'_, AppState>) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub async fn generate_ticket(state: tauri::State<'_, AppState>) -> Result<EndpointTicket, String> {
+pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
     let (ticket, endpoint) = streaming_server::network::iroh::generate_ticket()
         .await
         .expect("Failed to generate ticket/endpoint");

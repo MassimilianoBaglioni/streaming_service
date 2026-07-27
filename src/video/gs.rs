@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use gstreamer as gst;
-use gstreamer::{Pipeline, prelude::*};
+use gstreamer::{prelude::*, Pipeline};
 use gstreamer_app::{AppSink, AppSrc};
 use tracing::{error, info, warn};
 
@@ -124,7 +124,7 @@ pub fn start_screen_stream(
     info!("Pipeline: {}", pipeline_description);
 
     let pipeline = gst::parse::launch(&pipeline_description)?;
-    let pipeline = match pipeline.downcast::<gst::Pipeline>() {
+    let pipeline = match pipeline.downcast::<Pipeline>() {
         Ok(p) => p,
         Err(e) => {
             error!("Failed to downcast pipeline: {:?}", e);
@@ -237,25 +237,12 @@ pub fn create_windows_pipeline(
     client_port: u16,
 ) -> Pipeline {
     let video_scale_method = windows_settings.scaling_method.as_gst_method();
-    let aspect_ratio = width as f32 / height as f32;
 
-    let max_height = windows_settings.resolution as f32;
-    let max_width = aspect_ratio * max_height;
-
-    let mut scaled_height = height;
-    let mut scaled_width = width;
-
-    if height as f32 > max_height {
-        scaled_height = max_height as u32;
-        scaled_width = (height as f32 * aspect_ratio) as u32;
-    } else if width as f32 > max_width {
-        scaled_width = max_width as u32;
-        scaled_height = (width as f32 * aspect_ratio) as u32;
-    }
-
-    // Round to even for H.264
-    scaled_width &= !1;
-    scaled_height &= !1;
+    let (scaled_width, scaled_height) = scale_dimensions(
+        windows_settings.resolution as f32,
+        height,
+        width,
+    );
 
     let pipeline_description = format!(
         "appsrc name={} is-live=true do-timestamp=true format=time \
@@ -284,7 +271,7 @@ pub fn create_windows_pipeline(
 
     gstreamer::parse::launch(&pipeline_description)
         .expect("Failed to create pipeline")
-        .downcast::<gstreamer::Pipeline>()
+        .downcast::<Pipeline>()
         .expect("Failed to downcast to Pipeline")
 }
 
@@ -294,25 +281,12 @@ pub fn create_windows_pipeline_with_app_dest(
     windows_settings: &WindowsStreamingSettings,
 ) -> Pipeline {
     let video_scale_method = windows_settings.scaling_method.as_gst_method();
-    let aspect_ratio = width as f32 / height as f32;
 
-    let max_height = windows_settings.resolution as f32;
-    let max_width = aspect_ratio * max_height;
-
-    let mut scaled_height = height;
-    let mut scaled_width = width;
-
-    if height as f32 > max_height {
-        scaled_height = max_height as u32;
-        scaled_width = (height as f32 * aspect_ratio) as u32;
-    } else if width as f32 > max_width {
-        scaled_width = max_width as u32;
-        scaled_height = (width as f32 * aspect_ratio) as u32;
-    }
-
-    // Round to even for H.264
-    scaled_width &= !1;
-    scaled_height &= !1;
+    let (scaled_width, scaled_height) = scale_dimensions(
+        windows_settings.resolution as f32,
+        height,
+        width,
+    );
 
     let pipeline_description = format!(
         "appsrc name={} is-live=true do-timestamp=true format=time \
@@ -337,8 +311,36 @@ pub fn create_windows_pipeline_with_app_dest(
 
     gstreamer::parse::launch(&pipeline_description)
         .expect("Failed to create pipeline")
-        .downcast::<gstreamer::Pipeline>()
+        .downcast::<Pipeline>()
         .expect("Failed to downcast to Pipeline")
+}
+
+fn scale_dimensions(
+    resolution: f32,
+    height: u32,
+    width: u32,
+) -> (u32, u32) {
+    let aspect_ratio = width as f32 / height as f32;
+
+    let max_height = resolution;
+    let max_width = aspect_ratio * max_height;
+
+    let mut scaled_height = height;
+    let mut scaled_width = width;
+
+    if height as f32 > max_height {
+        scaled_height = max_height as u32;
+        scaled_width = (height as f32 * aspect_ratio) as u32;
+    } else if width as f32 > max_width {
+        scaled_width = max_width as u32;
+        scaled_height = (width as f32 * aspect_ratio) as u32;
+    }
+
+    // Round to even for H.264
+    scaled_width &= !1;
+    scaled_height &= !1;
+
+    (scaled_width, scaled_height)
 }
 
 pub fn get_app_src(pipeline: &Pipeline) -> AppSrc {
@@ -376,7 +378,7 @@ pub fn build_client_udp_pipeline(streaming_port: u16) -> Pipeline {
 
     let pipeline =
         gst::parse::launch(&pipeline_description).expect("Failed to launch client udp pipeline");
-    pipeline.downcast::<gst::Pipeline>().unwrap()
+    pipeline.downcast::<Pipeline>().unwrap()
 }
 
 pub fn build_client_iroh_pipeline() -> Pipeline {
@@ -396,5 +398,5 @@ pub fn build_client_iroh_pipeline() -> Pipeline {
 
     let pipeline =
         gst::parse::launch(&pipeline_description).expect("Failed to launch client iroh pipeline");
-    pipeline.downcast::<gst::Pipeline>().unwrap()
+    pipeline.downcast::<Pipeline>().unwrap()
 }

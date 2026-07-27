@@ -60,8 +60,8 @@ pub struct WindowsSource {
     token: Option<i64>,
     frame_pool: Option<SendWrapper<Direct3D11CaptureFramePool>>,
     graphics_capture_session: Option<SendWrapper<GraphicsCaptureSession>>,
-    app_src: Option<Arc<gstreamer_app::AppSrc>>,
-    app_sink: Option<Arc<gstreamer_app::AppSink>>,
+    app_src: Option<Arc<AppSrc>>,
+    app_sink: Option<Arc<AppSink>>,
     pipeline: Option<gstreamer::Pipeline>,
 }
 
