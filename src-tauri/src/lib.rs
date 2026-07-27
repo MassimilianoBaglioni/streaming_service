@@ -8,9 +8,10 @@ pub mod windows_impl;
 
 pub mod client;
 
-use commands::streaming::{
-    generate_ticket, start_streaming, start_watching, stop_streaming, stop_watching,
+use crate::commands::streaming::{
+    start_streaming_direct, start_streaming_iroh, start_watching_direct, start_watching_iroh,
 };
+use commands::streaming::{generate_ticket, stop_streaming, stop_watching};
 use state::app_state::AppState;
 use streaming_server::gstreamer as gst;
 use tracing::Level;
@@ -32,9 +33,11 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            start_streaming,
+            start_streaming_direct,
+            start_streaming_iroh,
             stop_streaming,
-            start_watching,
+            start_watching_direct,
+            start_watching_iroh,
             stop_watching,
             generate_ticket,
         ])

@@ -101,13 +101,18 @@ export class StreamPage {
     };
 
     try {
-      await callCommand('start_streaming', {
-        watcherAddress: this.streamForm.value.watcherAddress,
-        streamPort: this.streamForm.value.streamPort,
-        tcpPort: this.streamForm.value.tcpPort,
-        videoSettings: videoSettings,
-        connectionMode: this.connectionMode === 'invite' ? 'Iroh' : 'Direct',
-      });
+      if (this.connectionMode === 'direct') {
+        await callCommand('start_streaming_direct', {
+          watcherAddress: this.streamForm.value.watcherAddress,
+          watcherStreamPort: this.streamForm.value.streamPort,
+          eventsSocketPort: this.streamForm.value.tcpPort,
+          videoSettings: videoSettings,
+        });
+      } else {
+        await callCommand('start_streaming_iroh', {
+          videoSettings: videoSettings,
+        });
+      }
 
       this.isStreaming = true;
       this.startStatusPolling();
@@ -170,13 +175,18 @@ export class StreamPage {
 
       const inviteLink = this.watchForm.value.inviteLink?.trim();
 
-      await callCommand('start_watching', {
-        streamerAddress: this.watchForm.value.streamerAddress,
-        streamPort: this.watchForm.value.streamPort,
-        tcpPort: this.watchForm.value.tcpPort,
-        streamerIp: this.watchForm.value.streamerAddress ?? '127.0.0.1',
-        ticket: this.watchConnectionMode === 'invite' && inviteLink ? inviteLink : undefined,
-      });
+      if (this.watchConnectionMode === 'direct') {
+        await callCommand('start_watching_direct', {
+          streamerIp: this.watchForm.value.streamerAddress ?? '127.0.0.1',
+          streamPort: this.watchForm.value.streamPort,
+          tcpPort: this.watchForm.value.tcpPort,
+        });
+      } else {
+        await callCommand('start_watching_iroh', {
+          ticket: inviteLink,
+        });
+      }
+
       this.isWatching = true;
 
       console.log('Watching started');

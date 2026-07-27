@@ -1,33 +1,9 @@
 use anyhow::Result;
-use iroh::{endpoint::presets, Endpoint};
+use iroh::{Endpoint, endpoint::presets};
 use iroh_tickets::endpoint::EndpointTicket;
 use std::str::FromStr;
 
 pub mod connection;
-
-#[derive(Clone, Debug)]
-pub struct IrohInfo {
-    pub ticket: Option<EndpointTicket>,
-    pub endpoint: Option<Endpoint>,
-}
-
-impl IrohInfo {
-    pub fn new(ticket: EndpointTicket, endpoint: Endpoint) -> Self {
-        IrohInfo {
-            ticket: Some(ticket),
-            endpoint: Some(endpoint),
-        }
-    }
-}
-
-impl Default for IrohInfo {
-    fn default() -> Self {
-        Self {
-            ticket: None,
-            endpoint: None,
-        }
-    }
-}
 
 pub(crate) const ALPN: &[u8] = b"myapp/test/1";
 

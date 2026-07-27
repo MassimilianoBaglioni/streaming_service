@@ -1,8 +1,6 @@
 use gstreamer_app::AppSrc;
 use iroh::endpoint::RecvStream;
 use tracing::{error, info};
-
-use crate::network::ConnectionMode;
 pub async fn receive_frames_iroh(mut recv: RecvStream, appsrc: AppSrc) {
     let mut buf = vec![0u8; 64 * 1024]; // scratch read buffer
     let mut pending = Vec::new(); // accumulator for partial data

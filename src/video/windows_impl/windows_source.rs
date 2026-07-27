@@ -1,17 +1,15 @@
+use std::net::IpAddr;
+use std::ptr::null_mut;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{net::Ipv4Addr, ptr::null_mut};
 use tokio::sync::Mutex;
 
-use crate::network::server_connection::ServerConnection;
-use crate::network::ConnectionMode;
-use crate::{
-    network::NetInfo,
-    video::{
-        gs, video_source::VideoSourceKind,
-        windows_impl::windows_streaming_settings::WindowsStreamingSettings,
-    },
+use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
+use crate::network::ConnectionBuildInfo;
+use crate::video::{
+    gs, video_source::VideoSourceKind,
+    windows_impl::windows_streaming_settings::WindowsStreamingSettings,
 };
 use gstreamer::prelude::ElementExt;
 use gstreamer::Sample;
@@ -53,19 +51,10 @@ impl<T> SendWrapper<T> {
     fn get(&self) -> &T {
         &self.0
     }
-    fn get_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-    fn into_inner(self) -> T {
-        self.0
-    }
 }
 
 pub struct WindowsSource {
     connection: Option<Arc<Mutex<ServerConnection>>>,
-    tcp_port: u16,
-    host_ip: Ipv4Addr,
-    streaming_port: u16,
     graphics_capture_item: Option<SendWrapper<GraphicsCaptureItem>>,
     pub windows_settings: WindowsStreamingSettings,
     token: Option<i64>,
@@ -78,21 +67,14 @@ pub struct WindowsSource {
 
 impl WindowsSource {
     pub fn new(
-        tcp_port: u16,
-        streaming_port: u16,
-        host_ip: Ipv4Addr,
+        connection_build_info: ConnectionBuildInfo,
         graphics_capture_item: Option<GraphicsCaptureItem>,
         windows_settings: WindowsStreamingSettings,
-        connection_mode: ConnectionMode,
     ) -> Self {
-        let mut connection = ServerConnection::default();
-        connection.connection_mode = Some(connection_mode);
+        let server_connection = ServerConnection::from(connection_build_info);
 
         Self {
-            connection: None,
-            tcp_port,
-            streaming_port,
-            host_ip,
+            connection: Some(Arc::new(Mutex::new(server_connection))),
             graphics_capture_item: graphics_capture_item.map(SendWrapper::new),
             windows_settings,
             token: None,
@@ -128,15 +110,19 @@ impl WindowsSource {
                 .unwrap()
                 .lock()
                 .await
-                .connection_mode
-                .as_ref()
-                .unwrap(),
-            ConnectionMode::Direct
+                .connection_mode,
+            ServerConnectionMode::Direct { .. }
         );
 
-        let pixel_format = self.windows_settings.pixel_format.clone();
-        let buffer_count = self.windows_settings.buffer_count.clone();
+        let pixel_format = self.windows_settings.pixel_format;
+        let buffer_count = self.windows_settings.buffer_count;
         let capture_item = self.graphics_capture_item.as_ref().unwrap().get().clone();
+
+        let size = capture_item.Size().expect("Failed to get capture item");
+        let width = size.Width as u32;
+        let height = size.Height as u32;
+
+        self.init_pipeline(width, height).await;
 
         let mut device: Option<ID3D11Device> = None;
         let mut context: Option<ID3D11DeviceContext> = None;
@@ -169,10 +155,6 @@ impl WindowsSource {
         )
         .expect("Error creating frame pool");
 
-        let size = capture_item.Size().expect("Failed to get capture item");
-        let width = size.Width as u32;
-        let height = size.Height as u32;
-
         let staging_desc = D3D11_TEXTURE2D_DESC {
             Width: width,
             Height: height,
@@ -197,8 +179,6 @@ impl WindowsSource {
         }
         let staging_texture = staging_texture.unwrap();
 
-        self.init_pipeline(is_direct, width, height);
-
         let target_frame_interval =
             std::time::Duration::from_secs_f64(1.0 / self.windows_settings.fps as f64);
 
@@ -211,9 +191,6 @@ impl WindowsSource {
             last_frame_nanos: Arc::new(AtomicU64::new(0)),
         };
 
-        let last_frame_nanos = Arc::new(AtomicU64::new(0));
-        let last_clone = last_frame_nanos.clone();
-
         let handler = TypedEventHandler::new(
             move |sender: Ref<Direct3D11CaptureFramePool>, args: Ref<IInspectable>| {
                 frame_handler.on_frame_arrived(sender, args)
@@ -224,15 +201,35 @@ impl WindowsSource {
             .CreateCaptureSession(&capture_item)
             .expect("Capture session creation failed");
 
-        session.StartCapture().expect("Error starting capture");
-
         self.pipeline
             .as_mut()
             .unwrap()
             .set_state(gstreamer::State::Playing)
             .expect("Failed to set pipeline to Playing");
 
-        if (!is_direct) {
+        let token: i64 = frame_pool
+            .FrameArrived(&handler)
+            .expect("Error registering handler");
+
+        // let udpsink = self
+        //     .pipeline
+        //     .as_mut()
+        //     .unwrap()
+        //     .by_name("udpsink0")
+        //     .expect("udpsink0 not found in pipeline");
+        //
+        // let sink_pad = udpsink
+        //     .static_pad("sink")
+        //     .expect("udpsink always has a static sink pad");
+        //
+        // sink_pad.add_probe(gst::PadProbeType::BUFFER, |_pad, info| {
+        //     if let Some(buffer) = info.buffer() {
+        //         info!("udpsink about to send buffer: size={}", buffer.size());
+        //     }
+        //     gst::PadProbeReturn::Ok
+        // });
+
+        if !is_direct {
             // This code must be always after starting the pipeline because we need a playing pipeline to pull, otherwise we get errors
             let app_sink_clone = self.app_sink.clone();
 
@@ -242,10 +239,7 @@ impl WindowsSource {
             );
         }
 
-        let token: i64 = frame_pool
-            .FrameArrived(&handler)
-            .expect("Error registering handler");
-
+        session.StartCapture().expect("Error starting capture");
         self.save_to_keep_alive(frame_pool, session, token);
         info!("Capture started");
     }
@@ -264,7 +258,7 @@ impl WindowsSource {
     fn start_sending_frames_iroh(app_sink: Arc<AppSink>, connection: Arc<Mutex<ServerConnection>>) {
         let (sender, receiver) = tokio::sync::mpsc::channel::<Sample>(32);
 
-        let frame_sender_thread_handle = tokio::task::spawn_blocking(move || {
+        let _frame_sender_thread_handle = tokio::task::spawn_blocking(move || {
             loop {
                 match app_sink.pull_sample() {
                     Ok(sample) => {
@@ -280,37 +274,60 @@ impl WindowsSource {
             }
         });
 
-        let iroh_sender_task_handle = tokio::task::spawn(async move {
+        let _iroh_sender_task_handle = tokio::task::spawn(async move {
             connection.lock().await.send_frames_iroh(receiver).await;
         });
     }
 
-    fn init_pipeline(&mut self, is_direct: bool, width: u32, height: u32) {
-        if is_direct {
-            info!(
-                "host_ip: {:?}, port: {:?}",
-                self.host_ip, self.streaming_port
-            );
-            self.pipeline = Some(gs::create_windows_pipeline(
-                width,
-                height,
-                self.host_ip,
-                &self.windows_settings,
-                self.streaming_port,
-            ))
-        } else {
-            self.pipeline = Some(gs::create_windows_pipeline_with_app_dest(
-                width,
-                height,
-                &self.windows_settings,
-            ));
+    async fn init_pipeline(&mut self, width: u32, height: u32) {
+        // TODO, removed the flag is direct, and placed a lock on a mutex which might cause issues double check!!!
+        match self
+            .connection
+            .as_mut()
+            .unwrap()
+            .lock()
+            .await
+            .connection_mode
+        {
+            ServerConnectionMode::Direct {
+                client_address: client_ip,
+                client_streaming_port,
+                ..
+            } => {
+                info!(
+                    "client_ip: {:?}, port: {:?}",
+                    client_ip, client_streaming_port
+                );
 
-            self.app_src = Some(Arc::new(gs::get_app_src(self.pipeline.as_ref().unwrap())));
+                let client_ip = match client_ip.ip() {
+                    IpAddr::V4(ipv4) => ipv4,
+                    IpAddr::V6(_) => {
+                        panic!("Expected ipv4")
+                    }
+                };
 
-            self.app_sink = Some(Arc::new(gs::get_app_sink(
-                self.pipeline.as_ref().unwrap(),
-                "rtp_sink",
-            )));
+                self.pipeline = Some(gs::create_windows_pipeline(
+                    width,
+                    height,
+                    client_ip,
+                    &self.windows_settings,
+                    client_streaming_port,
+                ))
+            }
+            ServerConnectionMode::Iroh { .. } => {
+                self.pipeline = Some(gs::create_windows_pipeline_with_app_dest(
+                    width,
+                    height,
+                    &self.windows_settings,
+                ));
+
+                self.app_src = Some(Arc::new(gs::get_app_src(self.pipeline.as_ref().unwrap())));
+
+                self.app_sink = Some(Arc::new(gs::get_app_sink(
+                    self.pipeline.as_ref().unwrap(),
+                    "rtp_sink",
+                )));
+            }
         }
 
         self.app_src = Some(Arc::new(gs::get_app_src(self.pipeline.as_ref().unwrap())));
@@ -350,35 +367,41 @@ impl WindowsSource {
         info!("Streaming stopped");
     }
 
-    pub fn update_network_info(&mut self, net_info: &NetInfo) {
-        self.host_ip = net_info.target_ip;
-        self.tcp_port = net_info.tcp_port;
-        self.streaming_port = net_info.stream_port;
+    pub async fn update_network_info(&mut self, connection_build_info: ConnectionBuildInfo) {
+        let new_mode = match connection_build_info {
+            ConnectionBuildInfo::Direct {
+                watcher_stream_port,
+                tcp_socket_address: watcher_address,
+            } => ServerConnectionMode::Direct {
+                server_socket: None,
+                client_address: watcher_address,
+                client_streaming_port: watcher_stream_port,
+            },
+            ConnectionBuildInfo::Iroh { endpoint, .. } => ServerConnectionMode::Iroh {
+                send_stream: None,
+                recv_stream: None,
+                endpoint,
+                iroh_connection: None,
+            },
+        };
 
-        match &net_info.connection_mode {
-            ConnectionMode::Direct => {
-                self.connection = Some(Arc::new(Mutex::new(ServerConnection::from(
-                    net_info.tcp_port,
-                ))))
-            }
-            ConnectionMode::Iroh { info } => {
-                self.connection = Some(Arc::new(Mutex::new(ServerConnection::from(info.clone()))))
-            }
-        }
+        self.connection
+            .as_mut()
+            .unwrap()
+            .lock()
+            .await
+            .connection_mode = new_mode;
     }
 }
 pub fn create_windows_video_source(
-    net_info: &NetInfo,
+    connection_build_info: ConnectionBuildInfo,
     graphics_capture_item: Option<GraphicsCaptureItem>,
     windows_streaming_settings: WindowsStreamingSettings,
 ) -> Arc<Mutex<VideoSourceKind>> {
     Arc::new(Mutex::new(VideoSourceKind::Windows(WindowsSource::new(
-        net_info.tcp_port,
-        net_info.stream_port,
-        net_info.target_ip,
+        connection_build_info,
         graphics_capture_item,
         windows_streaming_settings,
-        net_info.connection_mode.clone(),
     ))))
 }
 
@@ -492,7 +515,7 @@ impl FrameArrivedHandler {
             //     .SystemRelativeTime()
             //     .expect("Error on systemRelative")
             //     .Duration;
-            // 
+            //
             // buffer_ref.set_pts(gstreamer::ClockTime::from_nseconds(timestamp as u64 * 100));
 
             let mut map = buffer_ref

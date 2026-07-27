@@ -1,7 +1,7 @@
 use crate::video::commons::scaling_method::ScalingMethod;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 
-// TODO allow the user to set this up from the fronted, like increase the number of buffers, or change the pixel format for HDR
+// TODO add to the UI all these settings, some are still missing
 #[derive(Clone)]
 pub struct WindowsStreamingSettings {
     pub buffer_count: i32, // The GPU can prepare frames while the display is showing the current one, this is the number of prepared frames

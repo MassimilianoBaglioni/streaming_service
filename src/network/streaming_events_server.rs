@@ -2,7 +2,7 @@ use tracing::info;
 
 use crate::network::streaming_event::StreamingEvent;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 
 pub struct StreamingEventSocketServer {
     // Listens for incoming connections
@@ -12,8 +12,8 @@ pub struct StreamingEventSocketServer {
 }
 
 impl StreamingEventSocketServer {
-    pub fn bind(address: &str) -> std::io::Result<Self> {
-        info!("Calling bind on tcp socket");
+    pub fn bind(address: SocketAddr) -> std::io::Result<Self> {
+        info!("Calling bind on tcp socket with address {:?}", address);
         let listener = TcpListener::bind(address)?;
         Ok(Self {
             listener,

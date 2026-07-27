@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gstreamer as gst;
-use gstreamer::{prelude::*, Pipeline};
+use gstreamer::{Pipeline, prelude::*};
 use gstreamer_app::{AppSink, AppSrc};
 use tracing::{error, info, warn};
 
@@ -232,9 +232,9 @@ pub fn start_screen_stream(
 pub fn create_windows_pipeline(
     width: u32,
     height: u32,
-    host: Ipv4Addr,
+    client_ip: Ipv4Addr,
     windows_settings: &WindowsStreamingSettings,
-    port: u16,
+    client_port: u16,
 ) -> Pipeline {
     let video_scale_method = windows_settings.scaling_method.as_gst_method();
     let aspect_ratio = width as f32 / height as f32;
@@ -254,8 +254,8 @@ pub fn create_windows_pipeline(
     }
 
     // Round to even for H.264
-    scaled_width = (scaled_width) & !1;
-    scaled_height = (scaled_height) & !1;
+    scaled_width &= !1;
+    scaled_height &= !1;
 
     let pipeline_description = format!(
         "appsrc name={} is-live=true do-timestamp=true format=time \
@@ -276,8 +276,8 @@ pub fn create_windows_pipeline(
         scaled_width,
         scaled_height,
         windows_settings.bitrate,
-        host,
-        port,
+        client_ip,
+        client_port,
     );
 
     info!("Server pipeline description: {}", pipeline_description);
@@ -311,8 +311,8 @@ pub fn create_windows_pipeline_with_app_dest(
     }
 
     // Round to even for H.264
-    scaled_width = (scaled_width) & !1;
-    scaled_height = (scaled_height) & !1;
+    scaled_width &= !1;
+    scaled_height &= !1;
 
     let pipeline_description = format!(
         "appsrc name={} is-live=true do-timestamp=true format=time \
@@ -352,10 +352,7 @@ pub fn get_app_src(pipeline: &Pipeline) -> AppSrc {
 pub fn get_app_sink(pipeline: &Pipeline, sink_name: &str) -> AppSink {
     pipeline
         .by_name(sink_name)
-        .expect(&format!(
-            "Failed to find appsink element, with name: {}",
-            sink_name
-        ))
+        .unwrap_or_else(|| panic!("Failed to find appsink element, with name: {}", sink_name))
         .downcast::<AppSink>()
         .expect("Failed to downcast to AppSink")
 }
@@ -375,6 +372,7 @@ pub fn build_client_udp_pipeline(streaming_port: u16) -> Pipeline {
         streaming_port
     );
     info!("Streaming port: {}", streaming_port);
+    info!("Client UDP pipeline description: {}", pipeline_description);
 
     let pipeline =
         gst::parse::launch(&pipeline_description).expect("Failed to launch client udp pipeline");

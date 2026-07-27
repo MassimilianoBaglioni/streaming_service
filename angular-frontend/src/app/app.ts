@@ -1,7 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
-import { Streaming } from './streaming/streaming';
 import { Sidebar } from './sidebar/sidebar';
 import { StreamPage } from './stream-page/stream-page';
 import { Shell } from './shell/shell';
