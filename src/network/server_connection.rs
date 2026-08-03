@@ -140,7 +140,7 @@ impl ServerConnection {
             };
 
             let mut send_ref = send_stream.lock().await;
-            if let Err(e) = ServerConnection::send_frame(&mut *send_ref, &frame).await {
+            if let Err(e) = ServerConnection::send_frame(&mut send_ref, &frame).await {
                 error!("Failed to send frame: {e}");
                 break;
             }

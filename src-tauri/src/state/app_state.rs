@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use streaming_server::network::server_connection::ServerConnection;
 use streaming_server::network::streaming_event::StreamingEvent;
 use streaming_server::network::{ConnectionBuildInfo, ConnectionMode};
@@ -7,8 +6,8 @@ use streaming_server::video::video_source::VideoSourceKind;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
-pub struct AppState { 
-    pub video_source: Arc<Mutex<Option<VideoSourceKind>>>, // TODO, simplify the state as much as possible. I fear that a lot of mutexes are not needed ans some fields are not as well 
+pub struct AppState {
+    pub video_source: Arc<Mutex<Option<VideoSourceKind>>>, // TODO, simplify the state as much as possible. I fear that a lot of mutexes are not needed ans some fields are not as well
     pub stop_watching_sender: Mutex<Option<Sender<StreamingEvent>>>,
     pub connection_mode: Mutex<Option<ConnectionMode>>,
     pub connection_build_info: Arc<Mutex<Option<ConnectionBuildInfo>>>,

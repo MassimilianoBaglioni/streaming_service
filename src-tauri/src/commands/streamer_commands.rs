@@ -150,7 +150,7 @@ async fn start_streaming(
 
     let windows_streaming_settings = map_windows_settings(&video_settings);
 
-    let new_source = VideoSourceKind::Windows(WindowsSource::new_with_server_conn(
+    let new_source = VideoSourceKind::Windows(WindowsSource::new(
         server_connection,
         Some(graphics_capture_item),
         windows_streaming_settings,
@@ -191,12 +191,11 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
     let (ticket, endpoint) = build_ticket().await.expect("Failed to generate ticket");
 
-    let ticket_to_return = ticket.clone();
     let state_server_connection_clone = state.server_connection.clone();
 
     let iroh_connection_task_handler = tokio::spawn(async move {
         info!("Generate ticket routine started");
-        let server_connection = establish_iroh_server_connection(ticket, endpoint).await?;
+        let server_connection = establish_iroh_server_connection(endpoint).await?;
 
         *state_server_connection_clone.lock().await = Some(server_connection);
         Ok(())
@@ -204,7 +203,7 @@ pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicke
 
     *state.tokio_handler.lock().await = Some(iroh_connection_task_handler);
 
-    Ok(ticket_to_return)
+    Ok(ticket)
 }
 
 fn map_windows_settings(frontend_settings: &VideoSettings) -> WindowsStreamingSettings {

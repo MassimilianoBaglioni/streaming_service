@@ -1,6 +1,5 @@
 use tauri::Manager;
 use tracing::warn;
-use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows::{
     core::Interface,
     Graphics::Capture::{GraphicsCaptureItem, GraphicsCapturePicker},
@@ -21,7 +20,7 @@ pub async fn show_picker(app: tauri::AppHandle) -> Option<GraphicsCaptureItem> {
 
         let fg = unsafe { GetForegroundWindow() };
         warn!(
-            "picker check: hwnd={:?} foreground={:?} is_foreground={}",
+            "Is window in foreground (required in order for the screen picker to work): hwnd={:?} foreground={:?} is_foreground={}",
             hwnd.0,
             fg.0,
             fg == hwnd

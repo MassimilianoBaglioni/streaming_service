@@ -6,11 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
-use crate::network::ConnectionBuildInfo;
-use crate::video::{
-    gs, video_source::VideoSourceKind,
-    windows_impl::windows_streaming_settings::WindowsStreamingSettings,
-};
+use crate::video::{gs, windows_impl::windows_streaming_settings::WindowsStreamingSettings};
 use gstreamer::prelude::ElementExt;
 use gstreamer::Sample;
 use gstreamer_app::{AppSink, AppSrc};
@@ -67,26 +63,6 @@ pub struct WindowsSource {
 
 impl WindowsSource {
     pub fn new(
-        connection_build_info: ConnectionBuildInfo,
-        graphics_capture_item: Option<GraphicsCaptureItem>,
-        windows_settings: WindowsStreamingSettings,
-    ) -> Self {
-        let server_connection = ServerConnection::from(connection_build_info);
-
-        Self {
-            connection: Some(Arc::new(Mutex::new(server_connection))),
-            graphics_capture_item: graphics_capture_item.map(SendWrapper::new),
-            windows_settings,
-            token: None,
-            frame_pool: None,
-            graphics_capture_session: None,
-            app_src: None,
-            app_sink: None,
-            pipeline: None,
-        }
-    }
-
-    pub fn new_with_server_conn(
         server_connection: ServerConnection,
         graphics_capture_item: Option<GraphicsCaptureItem>,
         windows_settings: WindowsStreamingSettings,
@@ -229,24 +205,6 @@ impl WindowsSource {
             .FrameArrived(&handler)
             .expect("Error registering handler");
 
-        // let udpsink = self
-        //     .pipeline
-        //     .as_mut()
-        //     .unwrap()
-        //     .by_name("udpsink0")
-        //     .expect("udpsink0 not found in pipeline");
-        //
-        // let sink_pad = udpsink
-        //     .static_pad("sink")
-        //     .expect("udpsink always has a static sink pad");
-        //
-        // sink_pad.add_probe(gst::PadProbeType::BUFFER, |_pad, info| {
-        //     if let Some(buffer) = info.buffer() {
-        //         info!("udpsink about to send buffer: size={}", buffer.size());
-        //     }
-        //     gst::PadProbeReturn::Ok
-        // });
-
         if !is_direct {
             // This code must be always after starting the pipeline because we need a playing pipeline to pull, otherwise we get errors
             let app_sink_clone = self.app_sink.clone();
@@ -298,7 +256,6 @@ impl WindowsSource {
     }
 
     async fn init_pipeline(&mut self, width: u32, height: u32) {
-        // TODO, removed the flag is direct, and placed a lock on a mutex which might cause issues double check!!!
         match self
             .connection
             .as_mut()
@@ -389,32 +346,6 @@ impl WindowsSource {
         *self.connection.as_mut().unwrap().lock().await = server_connection;
     }
 }
-pub fn create_windows_video_source(
-    connection_build_info: ConnectionBuildInfo,
-    graphics_capture_item: Option<GraphicsCaptureItem>,
-    windows_streaming_settings: WindowsStreamingSettings,
-) -> Arc<Mutex<VideoSourceKind>> {
-    Arc::new(Mutex::new(VideoSourceKind::Windows(WindowsSource::new(
-        connection_build_info,
-        graphics_capture_item,
-        windows_streaming_settings,
-    ))))
-}
-
-pub fn create_windows_video_source_with_server_conn(
-    server_connection: ServerConnection,
-    graphics_capture_item: Option<GraphicsCaptureItem>,
-    windows_streaming_settings: WindowsStreamingSettings,
-) -> VideoSourceKind {
-    VideoSourceKind::Windows(
-        WindowsSource::new_with_server_conn(
-            server_connection,
-            graphics_capture_item,
-            windows_streaming_settings,
-        ),
-    )
-}
-
 struct FrameArrivedHandler {
     app_src: Arc<AppSrc>,
     context: ID3D11DeviceContext,

@@ -21,7 +21,6 @@ pub async fn build_ticket() -> Result<(EndpointTicket, Endpoint)> {
 }
 
 pub async fn establish_iroh_server_connection(
-    ticket: EndpointTicket,
     endpoint: Endpoint,
 ) -> Result<ServerConnection> {
     let incoming = endpoint
@@ -36,12 +35,12 @@ pub async fn establish_iroh_server_connection(
 
     info!("Opened bi connection on the server");
 
-    return Ok(ServerConnection {
+    Ok(ServerConnection {
         connection_mode: ServerConnectionMode::Iroh {
             send_stream: Arc::new(Mutex::new(send_stream)),
             recv_stream: Arc::new(Mutex::new(recv_stream)),
             endpoint,
             iroh_connection,
         },
-    });
+    })
 }
