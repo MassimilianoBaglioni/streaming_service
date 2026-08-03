@@ -1,12 +1,13 @@
 use crate::state::app_state::AppState;
+use iroh_tickets::endpoint::EndpointTicket;
+use streaming_server::network::client_connection::ClientConnection;
+use streaming_server::network::streaming_event::StreamingEvent;
+use streaming_server::network::ConnectionBuildInfo;
 #[cfg(target_os = "windows")]
 use streaming_server::video::windows_impl::client::windows_client::WindowsClient;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc};
 use tracing::{error, info};
-
-use streaming_server::network::streaming_event::StreamingEvent;
-use streaming_server::network::ConnectionBuildInfo;
 
 #[tauri::command]
 pub async fn start_watching_direct(
@@ -23,7 +24,12 @@ pub async fn start_watching_direct(
     let connection_build_info = ConnectionBuildInfo::from_direct_info(stream_port, streamer_ip)
         .expect("Failed to build connection info");
 
-    start_watching(app, state, connection_build_info).await
+    let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
+    *state.stop_watching_sender.lock().await = Some(sender.clone());
+
+    let client_connection = ClientConnection::new(connection_build_info, Some(receiver));
+
+    start_watching(app, client_connection).await
 }
 #[tauri::command]
 pub async fn start_watching_iroh(
@@ -31,24 +37,21 @@ pub async fn start_watching_iroh(
     state: State<'_, AppState>,
     ticket: Option<String>,
 ) -> Result<(), String> {
-    let connection_build_info = ConnectionBuildInfo::from_ticket(ticket.unwrap().parse().unwrap())
-        .await
-        .expect("Failed to build connection info");
+    let ticket: EndpointTicket = ticket
+        .expect("No ticket received from frontend")
+        .parse()
+        .expect("Failed to parse ticket");
 
-    start_watching(app, state, connection_build_info).await
+    let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
+    *state.stop_watching_sender.lock().await = Some(sender.clone());
+    let client_connection = ClientConnection::new_from_ticket_and_recv(ticket, receiver).await;
+
+    start_watching(app, client_connection).await
 }
 
-async fn start_watching(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    connection_build_info: ConnectionBuildInfo,
-) -> Result<(), String> {
-    let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
-
-    *state.stop_watching_sender.lock().await = Some(sender.clone());
-
+async fn start_watching(app: AppHandle, client_connection: ClientConnection) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let mut client = WindowsClient::new(connection_build_info, receiver);
+    let mut client = WindowsClient::from(client_connection);
 
     #[cfg(target_os = "linux")]
     let client = PipewireClient::new(net_info);

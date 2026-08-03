@@ -31,6 +31,7 @@ pub fn run() {
     tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             start_streaming_direct,

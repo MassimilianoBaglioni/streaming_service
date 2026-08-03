@@ -1,5 +1,6 @@
 use tauri::Manager;
 use tracing::warn;
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows::{
     core::Interface,
     Graphics::Capture::{GraphicsCaptureItem, GraphicsCapturePicker},
@@ -9,10 +10,22 @@ use windows_future::AsyncOperationCompletedHandler;
 
 pub async fn show_picker(app: tauri::AppHandle) -> Option<GraphicsCaptureItem> {
     let hwnd_raw = app.get_webview_window("main").unwrap().hwnd().unwrap().0 as isize;
+
     let (tx, rx) = std::sync::mpsc::channel();
 
     app.run_on_main_thread(move || {
         use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+        let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
+
+        let fg = unsafe { GetForegroundWindow() };
+        warn!(
+            "picker check: hwnd={:?} foreground={:?} is_foreground={}",
+            hwnd.0,
+            fg.0,
+            fg == hwnd
+        );
 
         let hwnd = HWND(hwnd_raw as *mut std::ffi::c_void);
 
@@ -35,7 +48,8 @@ pub async fn show_picker(app: tauri::AppHandle) -> Option<GraphicsCaptureItem> {
 
                 match item {
                     Ok(val) => {
-                        tx.send(Some(val)).unwrap();
+                        tx.send(Some(val))
+                            .expect("Failed to send GraphicsCaptureItem");
                     }
                     Err(e) => warn!("Error on get result: {:?}", e),
                 };
@@ -44,9 +58,9 @@ pub async fn show_picker(app: tauri::AppHandle) -> Option<GraphicsCaptureItem> {
             }))
             .expect("Failing on set SetCompleted");
     })
-    .unwrap();
+    .expect("Failed to run on main thread");
 
-    rx.recv().unwrap()
+    rx.recv().expect("Failed to receive GraphicsCaptureItem")
 }
 
 // Sets up to allow bundled distribution on Windows. In this way the program can be shipped without requiring

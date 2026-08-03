@@ -7,7 +7,7 @@ use crate::video::gs;
 use gstreamer::prelude::ElementExt;
 use gstreamer::{Bus, Pipeline};
 use gstreamer_app::gst;
-use iroh::endpoint::Connection;
+use iroh::endpoint::{presets, Connection};
 use iroh::Endpoint;
 use iroh_tickets::endpoint::EndpointTicket;
 use std::net::SocketAddr;
@@ -17,12 +17,33 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub struct ClientConnection {
-    streaming_events_socket_client: Option<Arc<Mutex<StreamingEventSocketClient>>>,
     pub connection_mode: ConnectionMode,
     frontend_events_receiver: Option<Receiver<StreamingEvent>>,
-    pub pipeline: Option<Arc<Pipeline>>,
+    pub pipeline: Option<Arc<Pipeline>>, // TODO, I think that the pipeline does not belong here. This should just be network related. Counter argument -> direct pipeline handles udp
 }
 impl ClientConnection {
+    pub async fn new_from_ticket_and_recv(
+        ticket: EndpointTicket,
+        frontend_events_receiver: Receiver<StreamingEvent>,
+    ) -> Self {
+        let endpoint = Endpoint::builder(presets::N0)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await
+            .expect("Failed to bind the endpoint");
+
+        let connection = ClientConnection::iroh_connect(&ticket, &endpoint).await;
+
+        ClientConnection {
+            connection_mode: ConnectionMode::Iroh {
+                connection: Some(connection),
+                endpoint,
+                ticket,
+            },
+            frontend_events_receiver: Some(frontend_events_receiver),
+            pipeline: None,
+        }
+    }
     pub fn new(
         connection_build_info: ConnectionBuildInfo,
         events_receiver: Option<Receiver<StreamingEvent>>,
@@ -35,24 +56,25 @@ impl ClientConnection {
             } => {
                 let connection_mode = ConnectionMode::Direct {
                     socket_addr: tcp_socket_address,
+                    streaming_events_socket_client: None,
                     watcher_stream_port,
                 };
 
                 Self {
-                    streaming_events_socket_client: None,
                     connection_mode,
                     frontend_events_receiver: events_receiver,
                     pipeline: None,
                 }
             }
-            ConnectionBuildInfo::Iroh { endpoint, ticket } => {
+            ConnectionBuildInfo::Iroh {
+                endpoint, ticket, ..
+            } => {
                 let connection_mode = ConnectionMode::Iroh {
                     connection: None,
                     endpoint,
                     ticket,
                 };
                 Self {
-                    streaming_events_socket_client: None,
                     connection_mode,
                     frontend_events_receiver: events_receiver,
                     pipeline: None,
@@ -62,19 +84,19 @@ impl ClientConnection {
     }
     pub async fn connect(&mut self) -> Result<(), std::io::Error> {
         match &mut self.connection_mode {
-            ConnectionMode::Direct { socket_addr, .. } => {
-                self.streaming_events_socket_client = Some(Arc::new(Mutex::new(
+            ConnectionMode::Direct {
+                socket_addr,
+                streaming_events_socket_client,
+                ..
+            } => {
+                *streaming_events_socket_client = Some(Arc::new(Mutex::new(
                     ClientConnection::direct_connect(*socket_addr)?,
                 )));
 
                 Ok(())
             }
-            ConnectionMode::Iroh {
-                endpoint,
-                ticket,
-                connection,
-            } => {
-                *connection = Some(ClientConnection::iroh_connect(ticket, endpoint).await);
+            ConnectionMode::Iroh { .. } => {
+                info!("Iroh connection initiated");
                 Ok(())
             }
         }
@@ -131,11 +153,19 @@ impl ClientConnection {
             .take()
             .expect("No receiver found");
 
-        let socket_receiver_clone = self
-            .streaming_events_socket_client
-            .as_mut()
-            .unwrap()
-            .clone();
+        let socket_receiver_clone = match &self.connection_mode {
+            ConnectionMode::Direct {
+                streaming_events_socket_client,
+                ..
+            } => streaming_events_socket_client
+                .as_ref()
+                .expect("No socket for event handling")
+                .clone(),
+            ConnectionMode::Iroh { .. } => {
+                warn!("Iroh connection mode is not supported for direct event handling");
+                return;
+            }
+        };
 
         // Thread checking for socket events that can stop the stream
         // Spawn it before the loop to avoid ownership issues

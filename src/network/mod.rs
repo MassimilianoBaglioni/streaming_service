@@ -1,18 +1,21 @@
-pub(crate) mod client_connection;
+pub mod client_connection;
 pub mod iroh;
-pub(crate) mod server_connection;
+pub mod server_connection;
 pub mod streaming_event;
 pub mod streaming_events_client;
 pub mod streaming_events_server;
 
 use crate::video::gs::{build_client_iroh_pipeline, build_client_udp_pipeline};
 use gstreamer::Pipeline;
-use ::iroh::endpoint::{presets, Connection};
+use ::iroh::endpoint::{Connection, RecvStream, SendStream};
 use ::iroh::Endpoint;
 use iroh_tickets::endpoint::EndpointTicket;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::{net::AddrParseError, num::ParseIntError};
+use tokio::sync::Mutex;
 use tracing::warn;
+use crate::network::streaming_events_client::StreamingEventSocketClient;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -41,6 +44,9 @@ pub enum ConnectionBuildInfo {
     Iroh {
         endpoint: Endpoint,
         ticket: EndpointTicket,
+        connection: Option<Connection>,
+        send: Option<Arc<Mutex<SendStream>>>,
+        recv: Option<Arc<Mutex<RecvStream>>>,
     },
 }
 
@@ -68,29 +74,27 @@ impl ConnectionBuildInfo {
             tcp_socket_address,
         })
     }
-    pub async fn from_ticket(
-        ticket: EndpointTicket,
-    ) -> Result<ConnectionBuildInfo, ConnectionBuildError> {
-        let endpoint = Endpoint::bind(presets::N0)
-            .await
-            .expect("Failed to create endpoint");
 
-        Ok(ConnectionBuildInfo::Iroh { endpoint, ticket })
-    }
-
-    pub async fn from_endpoint_and_ticket(
+    pub fn from_endpoint_and_ticket(
         endpoint: Endpoint,
         ticket: EndpointTicket,
-    ) -> Result<ConnectionBuildInfo, ConnectionBuildError> {
-        Ok(ConnectionBuildInfo::Iroh { endpoint, ticket })
+    ) -> ConnectionBuildInfo {
+        ConnectionBuildInfo::Iroh {
+            endpoint,
+            ticket,
+            connection: None,
+            send: None,
+            recv: None,
+        }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum ConnectionMode {
     Direct {
         socket_addr: SocketAddr,
         watcher_stream_port: u16,
+        streaming_events_socket_client: Option<Arc<Mutex<StreamingEventSocketClient>>>,
     },
     Iroh {
         connection: Option<Connection>,

@@ -1,19 +1,20 @@
 use crate::state::app_state::AppState;
+#[cfg(target_os = "windows")]
+use crate::windows_impl::show_picker;
 use iroh_tickets::endpoint::EndpointTicket;
 use serde::Deserialize;
-use streaming_server::{network::ConnectionMode, video::video_source::VideoSourceKind};
+use streaming_server::video::video_source::VideoSourceKind;
 use tauri::{AppHandle, State};
 use tracing::{info, warn};
-#[cfg(target_os = "windows")]
-use {
-    crate::windows_impl::show_picker,
-    streaming_server::video::windows_impl::windows_source::create_windows_video_source,
-};
+use windows::Graphics::Capture::GraphicsCaptureItem;
 
 use streaming_server::network::ConnectionBuildInfo;
 use streaming_server::video::windows_impl::windows_streaming_settings::WindowsStreamingSettings;
 
+use streaming_server::network::iroh::{build_ticket, establish_iroh_server_connection};
+use streaming_server::network::server_connection::ServerConnection;
 use streaming_server::video::commons::scaling_method::ScalingMethod;
+use streaming_server::video::windows_impl::windows_source::WindowsSource;
 #[cfg(target_os = "linux")]
 use {
     crate::linux_impl::get_wayland_handles,
@@ -75,11 +76,23 @@ pub async fn start_streaming_direct(
     watcher_address: String,
     video_settings: VideoSettings,
 ) -> Result<(), String> {
+    // Take the capture item asap, Windows requires the window to be in foreground to show the picker, otherwise this fails.
+    let graphics_capture_item = show_picker(app.clone()).await;
+
     let connection_build_info =
         ConnectionBuildInfo::from_direct_info(watcher_stream_port, watcher_address)
             .expect("Failed to build connection info");
 
-    let result = start_streaming(state, app, &video_settings, connection_build_info).await;
+    let server_connection = ServerConnection::from(connection_build_info);
+
+    let result = start_streaming(
+        state,
+        app,
+        &video_settings,
+        server_connection,
+        graphics_capture_item.expect("Failed to get graphics capture item from picker"),
+    )
+    .await;
 
     result
 }
@@ -91,61 +104,62 @@ pub async fn start_streaming_iroh(
     app: AppHandle,
     video_settings: VideoSettings,
 ) -> Result<(), String> {
-    let (ticket, endpoint) = match state.connection_mode.lock().await.as_mut().unwrap() {
-        ConnectionMode::Iroh {
-            ticket, endpoint, ..
-        } => (ticket.clone(), endpoint.clone()),
-        ConnectionMode::Direct { .. } => {
-            return Err("Invalid connection mode for iroh streaming".to_string());
-        }
-    };
+    // Take the capture item asap, Windows requires the window to be in foreground to show the picker, otherwise this fails.
+    let graphics_capture_item = show_picker(app.clone()).await;
 
-    let connection_build_info = ConnectionBuildInfo::from_endpoint_and_ticket(endpoint, ticket)
+    // Wait and check for the connection tokio task to be completed.
+    let handle = state
+        .tokio_handler
+        .lock()
         .await
-        .expect("Failed to build connection info from ticket");
+        .take()
+        .expect("Tokio connection task was not started");
 
-    start_streaming(state, app, &video_settings, connection_build_info).await
+    handle
+        .await
+        .expect("Tokio connection start failed")
+        .map_err(|e| e.to_string())?;
+
+    // Losing ownership from state here. We can do this because the state is needed just to trasnfer the connection between the generate ticket interaction and the start streaming interaction
+    let server_connection = state
+        .server_connection
+        .lock()
+        .await
+        .take()
+        .expect("No server connection found for iroh.");
+
+    start_streaming(
+        state,
+        app,
+        &video_settings,
+        server_connection,
+        graphics_capture_item.expect("Failed to get graphics capture item from picker"),
+    )
+    .await
 }
 
 async fn start_streaming(
     state: State<'_, AppState>,
     app: AppHandle,
     video_settings: &VideoSettings,
-    connection_build_info: ConnectionBuildInfo,
+    server_connection: ServerConnection,
+    graphics_capture_item: GraphicsCaptureItem,
 ) -> Result<(), String> {
-    let capture_item = show_picker(app.clone()).await;
-
     // This must stay AFTER async calls, can't lock with async functions
-    let mut lock = state.video_source.lock().await;
+    let mut windows_source = state.video_source.lock().await;
 
     let windows_streaming_settings = map_windows_settings(&video_settings);
 
-    if lock.is_none() {
-        info!("Video source not initialized, initializing inside start_streaming");
+    let new_source = VideoSourceKind::Windows(WindowsSource::new_with_server_conn(
+        server_connection,
+        Some(graphics_capture_item),
+        windows_streaming_settings,
+    ));
+    *windows_source = Some(new_source);
 
-        let new_source = create_windows_video_source(
-            connection_build_info.clone(),
-            capture_item.clone(),
-            windows_streaming_settings.clone(),
-        );
-        *lock = Some(new_source);
-    }
-
-    if let Some(video_source) = lock.as_ref() {
-        info!("Video source already initialized, starting stream");
-        let mut vs = video_source.lock().await;
-        match &mut *vs {
-            VideoSourceKind::Windows(windows_source) => {
-                windows_source.set_graphics_capture_item(capture_item.clone());
-                info!("ConnectionBuildInfo value: {:?}", connection_build_info);
-
-                windows_source
-                    .update_network_info(connection_build_info)
-                    .await;
-                windows_source.windows_settings = windows_streaming_settings;
-
-                windows_source.start_streaming().await;
-            }
+    match windows_source.as_mut().unwrap() {
+        VideoSourceKind::Windows(windows_source) => {
+            windows_source.start_streaming().await;
         }
     }
 
@@ -155,9 +169,8 @@ async fn start_streaming(
 #[tauri::command]
 pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
     // TODO check that we close the tcp sockets when stop streaming or stop watching are called
-    if let Some(video_source) = state.video_source.lock().await.as_ref() {
-        let mut vs = video_source.lock().await;
-        match &mut *vs {
+    if let Some(video_source) = state.video_source.lock().await.as_mut() {
+        match &mut *video_source {
             #[cfg(target_os = "windows")]
             VideoSourceKind::Windows(windows_source) => {
                 windows_source.stop_streaming().await;
@@ -176,17 +189,22 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
-    let (ticket, endpoint) = streaming_server::network::iroh::generate_ticket()
-        .await
-        .expect("Failed to generate ticket/endpoint");
+    let (ticket, endpoint) = build_ticket().await.expect("Failed to generate ticket");
 
-    *state.connection_mode.lock().await = Some(ConnectionMode::Iroh {
-        connection: None,
-        endpoint,
-        ticket: ticket.clone(),
+    let ticket_to_return = ticket.clone();
+    let state_server_connection_clone = state.server_connection.clone();
+
+    let iroh_connection_task_handler = tokio::spawn(async move {
+        info!("Generate ticket routine started");
+        let server_connection = establish_iroh_server_connection(ticket, endpoint).await?;
+
+        *state_server_connection_clone.lock().await = Some(server_connection);
+        Ok(())
     });
 
-    Ok(ticket)
+    *state.tokio_handler.lock().await = Some(iroh_connection_task_handler);
+
+    Ok(ticket_to_return)
 }
 
 fn map_windows_settings(frontend_settings: &VideoSettings) -> WindowsStreamingSettings {

@@ -6,7 +6,9 @@ use gstreamer::Sample;
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::Endpoint;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub enum ServerConnectionMode {
@@ -16,10 +18,10 @@ pub enum ServerConnectionMode {
         client_streaming_port: u16,
     },
     Iroh {
-        send_stream: Option<SendStream>,
-        recv_stream: Option<RecvStream>,
+        send_stream: Arc<Mutex<SendStream>>,
+        recv_stream: Arc<Mutex<RecvStream>>,
         endpoint: Endpoint,
-        iroh_connection: Option<Connection>,
+        iroh_connection: Connection,
     },
 }
 
@@ -37,11 +39,15 @@ impl From<ConnectionBuildInfo> for ServerConnectionMode {
             ConnectionBuildInfo::Iroh {
                 endpoint,
                 ticket: _,
+                send,
+                recv,
+                connection,
             } => ServerConnectionMode::Iroh {
-                send_stream: None,
-                recv_stream: None,
+                send_stream: send.expect("Failed to pass send stream").clone(), // TODO here we are passing the Arc directly. We need an Arc<Mutex<SendStream>> what is the best solution?
+                // i added the Arc because i had some clones around and send does not implement clone, but im not sure this is correct
+                recv_stream: recv.expect("Failed to pass recv stream"),
                 endpoint,
-                iroh_connection: None,
+                iroh_connection: connection.expect("Failed to pass iroh connection"),
             },
         }
     }
@@ -82,31 +88,8 @@ impl ServerConnection {
                 // Accept a client (closes previous connection if any and waits for a new one)
                 info!("Accepted client");
             }
-            ServerConnectionMode::Iroh {
-                endpoint,
-                iroh_connection,
-                send_stream,
-                recv_stream,
-            } => {
-                info!("Ready to accept incoming iroh connections");
-                info!("Server generated Node ID: {:?}", endpoint.addr());
-                let incoming = endpoint
-                    .accept()
-                    .await
-                    .expect("Error connecting to the endpoint");
-
-                info!("Accepted iroh client");
-
-                let conn = incoming.await.expect("Error accepting connection");
-                let (send, recv) = conn.open_bi().await.expect("Failed to open connection");
-
-                info!("Opened bi connection on the server");
-
-                *send_stream = Some(send);
-                *recv_stream = Some(recv);
-                *iroh_connection = Some(conn);
-
-                info!("Successfully opened connection");
+            ServerConnectionMode::Iroh { .. } => {
+                info!("Iroh server connection is already established, no need to accept");
             }
         }
     }
@@ -149,7 +132,6 @@ impl ServerConnection {
             error!("No iroh connection mode");
             return;
         };
-        let send = send_stream.as_mut().expect("No iroh send stream");
 
         loop {
             let Some(frame) = recv.recv().await else {
@@ -157,7 +139,8 @@ impl ServerConnection {
                 break;
             };
 
-            if let Err(e) = ServerConnection::send_frame(send, &frame).await {
+            let mut send_ref = send_stream.lock().await;
+            if let Err(e) = ServerConnection::send_frame(&mut *send_ref, &frame).await {
                 error!("Failed to send frame: {e}");
                 break;
             }

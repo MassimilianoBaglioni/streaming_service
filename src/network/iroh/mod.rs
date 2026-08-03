@@ -1,35 +1,16 @@
-use anyhow::Result;
-use iroh::{Endpoint, endpoint::presets};
+use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
+use anyhow::{anyhow, Result};
+use iroh::{endpoint::presets, Endpoint};
 use iroh_tickets::endpoint::EndpointTicket;
-use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::info;
 
 pub mod connection;
 
 pub(crate) const ALPN: &[u8] = b"myapp/test/1";
 
-pub async fn run_receiver() -> Result<()> {
-    let (ticket, endpoint) = generate_ticket()
-        .await
-        .expect("Failed to get ticket/endpoint");
-
-    println!("Invite ticket: {ticket}");
-    println!("Waiting for sender...");
-
-    if let Some(incoming) = endpoint.accept().await {
-        let conn = incoming.await?;
-        println!("Sender connected!");
-
-        let (mut _send, mut recv) = conn.accept_bi().await?;
-        let mut buf = vec![0u8; 1024];
-        if let Some(n) = recv.read(&mut buf).await? {
-            println!("Received: {}", std::str::from_utf8(&buf[..n])?);
-        }
-    }
-    endpoint.close().await;
-    Ok(())
-}
-
-pub async fn generate_ticket() -> Result<(EndpointTicket, Endpoint)> {
+pub async fn build_ticket() -> Result<(EndpointTicket, Endpoint)> {
     let endpoint = Endpoint::builder(presets::N0)
         .alpns(vec![ALPN.to_vec()])
         .bind()
@@ -39,21 +20,28 @@ pub async fn generate_ticket() -> Result<(EndpointTicket, Endpoint)> {
     Ok((EndpointTicket::new(endpoint.addr()), endpoint))
 }
 
-pub async fn run_sender(ticket_str: &str) -> Result<()> {
-    let endpoint = Endpoint::bind(presets::N0).await?;
-    endpoint.online().await;
+pub async fn establish_iroh_server_connection(
+    ticket: EndpointTicket,
+    endpoint: Endpoint,
+) -> Result<ServerConnection> {
+    let incoming = endpoint
+        .accept()
+        .await
+        .ok_or_else(|| anyhow!("Endpoint closed while waiting for incoming connection"))?;
 
-    let ticket = EndpointTicket::from_str(ticket_str)?;
-    println!("Connecting...");
-    let conn = endpoint
-        .connect(ticket.endpoint_addr().clone(), ALPN)
-        .await?;
-    println!("Connected!");
+    info!("Accepted iroh client");
 
-    let (mut send, _recv) = conn.open_bi().await?;
-    send.write_all(b"hello from sender!").await?;
-    send.finish()?;
-    println!("Message sent!");
-    endpoint.close().await;
-    Ok(())
+    let iroh_connection = incoming.await?;
+    let (send_stream, recv_stream) = iroh_connection.open_bi().await?;
+
+    info!("Opened bi connection on the server");
+
+    return Ok(ServerConnection {
+        connection_mode: ServerConnectionMode::Iroh {
+            send_stream: Arc::new(Mutex::new(send_stream)),
+            recv_stream: Arc::new(Mutex::new(recv_stream)),
+            endpoint,
+            iroh_connection,
+        },
+    });
 }

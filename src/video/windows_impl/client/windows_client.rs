@@ -13,6 +13,14 @@ pub struct WindowsClient {
     client_connection: Option<ClientConnection>,
 }
 
+impl From<ClientConnection> for WindowsClient {
+    fn from(client_connection: ClientConnection) -> Self {
+        Self {
+            client_connection: Some(client_connection),
+        }
+    }
+}
+
 impl WindowsClient {
     pub fn new(
         connection_build_info: ConnectionBuildInfo,
@@ -22,6 +30,8 @@ impl WindowsClient {
             connection_build_info,
             Some(events_receiver),
         ));
+        /* TODO currently we have the iroh init separated and the connection mode does not contain the recv and send. I think that we should init everything here directly like the server does
+        and add the fields to the connection, something like that. */
         Self { client_connection }
     }
 

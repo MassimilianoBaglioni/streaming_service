@@ -5,6 +5,7 @@ use std::{
 
 use crate::network::streaming_event::StreamingEvent;
 
+#[derive(Debug)]
 pub struct StreamingEventSocketClient {
     stream: TcpStream,
 }

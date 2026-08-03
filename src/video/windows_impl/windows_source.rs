@@ -86,6 +86,24 @@ impl WindowsSource {
         }
     }
 
+    pub fn new_with_server_conn(
+        server_connection: ServerConnection,
+        graphics_capture_item: Option<GraphicsCaptureItem>,
+        windows_settings: WindowsStreamingSettings,
+    ) -> Self {
+        Self {
+            connection: Some(Arc::new(Mutex::new(server_connection))),
+            graphics_capture_item: graphics_capture_item.map(SendWrapper::new),
+            windows_settings,
+            token: None,
+            frame_pool: None,
+            graphics_capture_session: None,
+            app_src: None,
+            app_sink: None,
+            pipeline: None,
+        }
+    }
+
     pub fn set_graphics_capture_item(
         &mut self,
         graphics_capture_item: Option<GraphicsCaptureItem>,
@@ -367,30 +385,8 @@ impl WindowsSource {
         info!("Streaming stopped");
     }
 
-    pub async fn update_network_info(&mut self, connection_build_info: ConnectionBuildInfo) {
-        let new_mode = match connection_build_info {
-            ConnectionBuildInfo::Direct {
-                watcher_stream_port,
-                tcp_socket_address: watcher_address,
-            } => ServerConnectionMode::Direct {
-                server_socket: None,
-                client_address: watcher_address,
-                client_streaming_port: watcher_stream_port,
-            },
-            ConnectionBuildInfo::Iroh { endpoint, .. } => ServerConnectionMode::Iroh {
-                send_stream: None,
-                recv_stream: None,
-                endpoint,
-                iroh_connection: None,
-            },
-        };
-
-        self.connection
-            .as_mut()
-            .unwrap()
-            .lock()
-            .await
-            .connection_mode = new_mode;
+    pub async fn update_network_info(&mut self, server_connection: ServerConnection) {
+        *self.connection.as_mut().unwrap().lock().await = server_connection;
     }
 }
 pub fn create_windows_video_source(
@@ -403,6 +399,20 @@ pub fn create_windows_video_source(
         graphics_capture_item,
         windows_streaming_settings,
     ))))
+}
+
+pub fn create_windows_video_source_with_server_conn(
+    server_connection: ServerConnection,
+    graphics_capture_item: Option<GraphicsCaptureItem>,
+    windows_streaming_settings: WindowsStreamingSettings,
+) -> VideoSourceKind {
+    VideoSourceKind::Windows(
+        WindowsSource::new_with_server_conn(
+            server_connection,
+            graphics_capture_item,
+            windows_streaming_settings,
+        ),
+    )
 }
 
 struct FrameArrivedHandler {
