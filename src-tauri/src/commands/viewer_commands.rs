@@ -6,7 +6,7 @@ use streaming_server::network::ConnectionBuildInfo;
 #[cfg(target_os = "windows")]
 use streaming_server::video::windows_impl::client::windows_client::WindowsClient;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::{mpsc};
+use tokio::sync::mpsc;
 use tracing::{error, info};
 
 #[tauri::command]
@@ -25,7 +25,9 @@ pub async fn start_watching_direct(
         .expect("Failed to build connection info");
 
     let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
-    *state.stop_watching_sender.lock().await = Some(sender.clone());
+
+    let mut streaming_session = state.streaming_session.lock().await;
+    streaming_session.stop_watching_sender = Some(sender.clone());
 
     let client_connection = ClientConnection::new(connection_build_info, Some(receiver));
 
@@ -43,7 +45,9 @@ pub async fn start_watching_iroh(
         .expect("Failed to parse ticket");
 
     let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
-    *state.stop_watching_sender.lock().await = Some(sender.clone());
+
+    let mut streaming_session = state.streaming_session.lock().await;
+    streaming_session.stop_watching_sender = Some(sender.clone());
     let client_connection = ClientConnection::new_from_ticket_and_recv(ticket, receiver).await;
 
     start_watching(app, client_connection).await
@@ -83,7 +87,7 @@ async fn start_watching(app: AppHandle, client_connection: ClientConnection) -> 
 
 #[tauri::command]
 pub async fn stop_watching(state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(sender) = state.stop_watching_sender.lock().await.as_ref() {
+    if let Some(sender) = state.streaming_session.lock().await.stop_watching_sender.as_ref() {
         sender
             .send(StreamingEvent::ClientQuit)
             .await

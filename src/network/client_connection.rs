@@ -134,6 +134,7 @@ impl ClientConnection {
                 self.handle_events_direct(bus_clone).await;
             }
             ConnectionMode::Iroh { connection, .. } => {
+                info!("Iroh accepting connection bi on client");
                 let (_send, recv) = connection
                     .as_ref()
                     .unwrap()
@@ -141,6 +142,7 @@ impl ClientConnection {
                     .await
                     .expect("Failed to open connection from the client");
 
+                info!("Accepted bi connection on client");
                 receive_frames_iroh(recv, gs::get_app_src(self.pipeline.as_ref().unwrap())).await;
             }
         }

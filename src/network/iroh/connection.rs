@@ -5,6 +5,8 @@ pub async fn receive_frames_iroh(mut recv: RecvStream, appsrc: AppSrc) {
     let mut buf = vec![0u8; 64 * 1024]; // scratch read buffer
     let mut pending = Vec::new(); // accumulator for partial data
 
+    info!("Starting to receive frames from iroh connection");
+
     loop {
         match recv.read(&mut buf).await {
             Ok(Some(n)) => {

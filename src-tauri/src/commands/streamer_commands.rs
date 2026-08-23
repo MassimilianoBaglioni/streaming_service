@@ -87,7 +87,6 @@ pub async fn start_streaming_direct(
 
     let result = start_streaming(
         state,
-        app,
         &video_settings,
         server_connection,
         graphics_capture_item.expect("Failed to get graphics capture item from picker"),
@@ -107,30 +106,29 @@ pub async fn start_streaming_iroh(
     // Take the capture item asap, Windows requires the window to be in foreground to show the picker, otherwise this fails.
     let graphics_capture_item = show_picker(app.clone()).await;
 
-    // Wait and check for the connection tokio task to be completed.
-    let handle = state
-        .tokio_handler
-        .lock()
-        .await
-        .take()
-        .expect("Tokio connection task was not started");
+    let handle = {
+        let mut streaming_session = state.streaming_session.lock().await;
+        streaming_session
+            .tokio_handler
+            .take()
+            .expect("Tokio connection task was not started")
+        // guard dropped here, at end of scope
+    };
 
     handle
         .await
         .expect("Tokio connection start failed")
         .map_err(|e| e.to_string())?;
 
-    // Losing ownership from state here. We can do this because the state is needed just to trasnfer the connection between the generate ticket interaction and the start streaming interaction
-    let server_connection = state
+    let mut streaming_session = state.streaming_session.lock().await;
+    let server_connection = streaming_session
         .server_connection
-        .lock()
-        .await
         .take()
         .expect("No server connection found for iroh.");
+    drop(streaming_session);
 
     start_streaming(
         state,
-        app,
         &video_settings,
         server_connection,
         graphics_capture_item.expect("Failed to get graphics capture item from picker"),
@@ -140,13 +138,12 @@ pub async fn start_streaming_iroh(
 
 async fn start_streaming(
     state: State<'_, AppState>,
-    app: AppHandle,
     video_settings: &VideoSettings,
     server_connection: ServerConnection,
     graphics_capture_item: GraphicsCaptureItem,
 ) -> Result<(), String> {
     // This must stay AFTER async calls, can't lock with async functions
-    let mut windows_source = state.video_source.lock().await;
+    let mut streaming_session = state.streaming_session.lock().await;
 
     let windows_streaming_settings = map_windows_settings(&video_settings);
 
@@ -155,10 +152,11 @@ async fn start_streaming(
         Some(graphics_capture_item),
         windows_streaming_settings,
     ));
-    *windows_source = Some(new_source);
 
-    match windows_source.as_mut().unwrap() {
-        VideoSourceKind::Windows(windows_source) => {
+    streaming_session.video_source = Some(new_source);
+
+    match streaming_session.video_source.as_mut().unwrap() {
+        VideoSourceKind::Windows(ref mut windows_source) => {
             windows_source.start_streaming().await;
         }
     }
@@ -169,7 +167,7 @@ async fn start_streaming(
 #[tauri::command]
 pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
     // TODO check that we close the tcp sockets when stop streaming or stop watching are called
-    if let Some(video_source) = state.video_source.lock().await.as_mut() {
+    if let Some(video_source) = state.streaming_session.lock().await.video_source.as_mut() {
         match &mut *video_source {
             #[cfg(target_os = "windows")]
             VideoSourceKind::Windows(windows_source) => {
@@ -186,22 +184,22 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
     info!("Stop streaming flag set to true");
     Ok(())
 }
-
 #[tauri::command]
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
     let (ticket, endpoint) = build_ticket().await.expect("Failed to generate ticket");
 
-    let state_server_connection_clone = state.server_connection.clone();
+    let streaming_session = state.streaming_session.clone();
+    let stream_session_clone = streaming_session.clone();
 
     let iroh_connection_task_handler = tokio::spawn(async move {
         info!("Generate ticket routine started");
         let server_connection = establish_iroh_server_connection(endpoint).await?;
 
-        *state_server_connection_clone.lock().await = Some(server_connection);
+        stream_session_clone.lock().await.server_connection = Some(server_connection);
         Ok(())
     });
 
-    *state.tokio_handler.lock().await = Some(iroh_connection_task_handler);
+    streaming_session.lock().await.tokio_handler = Some(iroh_connection_task_handler);
 
     Ok(ticket)
 }
