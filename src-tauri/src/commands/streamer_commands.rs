@@ -1,4 +1,4 @@
-use crate::state::app_state::AppState;
+use crate::state::app_state::{AppState, StreamingSession};
 #[cfg(target_os = "windows")]
 use crate::windows_impl::show_picker;
 use iroh_tickets::endpoint::EndpointTicket;
@@ -166,9 +166,10 @@ async fn start_streaming(
 
 #[tauri::command]
 pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
-    // TODO check that we close the tcp sockets when stop streaming or stop watching are called
-    if let Some(video_source) = state.streaming_session.lock().await.video_source.as_mut() {
-        match &mut *video_source {
+    let video_source = state.streaming_session.lock().await.video_source.take();
+
+    if let Some(mut video_source) = video_source {
+        match &mut video_source {
             #[cfg(target_os = "windows")]
             VideoSourceKind::Windows(windows_source) => {
                 windows_source.stop_streaming().await;
@@ -181,9 +182,12 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
     } else {
         warn!("No video source obj to stop the stream");
     }
+
+    *state.streaming_session.lock().await = StreamingSession::default();
     info!("Stop streaming flag set to true");
     Ok(())
 }
+
 #[tauri::command]
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
     let (ticket, endpoint) = build_ticket().await.expect("Failed to generate ticket");
