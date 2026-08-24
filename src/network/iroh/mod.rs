@@ -1,5 +1,6 @@
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
 use anyhow::{anyhow, Result};
+use iroh::endpoint::{RecvStream, SendStream};
 use iroh::{endpoint::presets, Endpoint};
 use iroh_tickets::endpoint::EndpointTicket;
 use std::sync::Arc;
@@ -20,9 +21,7 @@ pub async fn build_ticket() -> Result<(EndpointTicket, Endpoint)> {
     Ok((EndpointTicket::new(endpoint.addr()), endpoint))
 }
 
-pub async fn establish_iroh_server_connection(
-    endpoint: Endpoint,
-) -> Result<ServerConnection> {
+pub async fn establish_iroh_server_connection(endpoint: Endpoint) -> Result<ServerConnection> {
     let incoming = endpoint
         .accept()
         .await
@@ -37,10 +36,31 @@ pub async fn establish_iroh_server_connection(
 
     Ok(ServerConnection {
         connection_mode: ServerConnectionMode::Iroh {
-            send_stream: Arc::new(Mutex::new(send_stream)),
-            recv_stream: Arc::new(Mutex::new(recv_stream)),
+            frames_stream: FramesStreaming::new(send_stream, recv_stream),
             endpoint,
             iroh_connection,
         },
     })
+}
+
+pub struct FramesStreaming {
+    send_stream: Arc<Mutex<SendStream>>,
+    recv_stream: Arc<Mutex<RecvStream>>,
+}
+
+impl FramesStreaming {
+    pub fn new(send_stream: SendStream, recv_stream: RecvStream) -> Self {
+        Self {
+            send_stream: Arc::new(Mutex::new(send_stream)),
+            recv_stream: Arc::new(Mutex::new(recv_stream)),
+        }
+    }
+
+    pub async fn get_send_lock(&self) -> tokio::sync::MutexGuard<'_, SendStream> {
+        self.send_stream.lock().await
+    }
+
+    pub async fn get_recv_lock(&self) -> tokio::sync::MutexGuard<'_, RecvStream> {
+        self.recv_stream.lock().await
+    }
 }

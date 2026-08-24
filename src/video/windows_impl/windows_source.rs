@@ -338,6 +338,8 @@ impl WindowsSource {
             .lock()
             .await
             .send_end_event_and_close_conn();
+        
+        self.connection = None;
 
         info!("Streaming stopped");
     }

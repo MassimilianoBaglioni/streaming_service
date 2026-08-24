@@ -1,14 +1,13 @@
+use crate::network::iroh::FramesStreaming;
 use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_server::StreamingEventSocketServer;
 use crate::network::ConnectionBuildInfo;
 use anyhow::Context;
 use gstreamer::Sample;
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::endpoint::{Connection, SendStream};
 use iroh::Endpoint;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub enum ServerConnectionMode {
@@ -18,8 +17,7 @@ pub enum ServerConnectionMode {
         client_streaming_port: u16,
     },
     Iroh {
-        send_stream: Arc<Mutex<SendStream>>,
-        recv_stream: Arc<Mutex<RecvStream>>,
+        frames_stream: FramesStreaming,
         endpoint: Endpoint,
         iroh_connection: Connection,
     },
@@ -36,19 +34,7 @@ impl From<ConnectionBuildInfo> for ServerConnectionMode {
                 client_address: tcp_address,
                 client_streaming_port: watcher_stream_port,
             },
-            ConnectionBuildInfo::Iroh {
-                endpoint,
-                ticket: _,
-                send,
-                recv,
-                connection,
-            } => ServerConnectionMode::Iroh {
-                send_stream: send.expect("Failed to pass send stream").clone(), // TODO here we are passing the Arc directly. We need an Arc<Mutex<SendStream>> what is the best solution?
-                // i added the Arc because i had some clones around and send does not implement clone, but im not sure this is correct
-                recv_stream: recv.expect("Failed to pass recv stream"),
-                endpoint,
-                iroh_connection: connection.expect("Failed to pass iroh connection"),
-            },
+            ConnectionBuildInfo::Iroh { .. } => todo!(),
         }
     }
 }
@@ -108,7 +94,7 @@ impl ServerConnection {
         }
     }
 
-    pub fn close_socket(&mut self) {
+    fn close_conn(&mut self) {
         match &mut self.connection_mode {
             ServerConnectionMode::Direct { server_socket, .. } => {
                 // Take leaves None after the block is executed
@@ -116,19 +102,19 @@ impl ServerConnection {
                     socket.disconnect();
                 }
             }
-            _ => {
-                error!("Calling close socket on non direct type of connection");
+            ServerConnectionMode::Iroh { .. } => {
+                todo!();
             }
         }
     }
 
     pub fn send_end_event_and_close_conn(&mut self) {
         self.send_event(StreamingEvent::ServerEndsStream);
-        self.close_socket();
+        self.close_conn();
     }
 
     pub async fn send_frames_iroh(&mut self, mut recv: Receiver<Sample>) {
-        let ServerConnectionMode::Iroh { send_stream, .. } = &mut self.connection_mode else {
+        let ServerConnectionMode::Iroh { frames_stream, .. } = &mut self.connection_mode else {
             error!("No iroh connection mode");
             return;
         };
@@ -139,7 +125,7 @@ impl ServerConnection {
                 break;
             };
 
-            let mut send_ref = send_stream.lock().await;
+            let mut send_ref = frames_stream.get_send_lock().await;
             if let Err(e) = ServerConnection::send_frame(&mut send_ref, &frame).await {
                 error!("Failed to send frame: {e}");
                 break;
