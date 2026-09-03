@@ -5,17 +5,18 @@ pub mod streaming_event;
 pub mod streaming_events_client;
 pub mod streaming_events_server;
 
+use crate::network::iroh::IrohStream;
+use crate::network::streaming_events_client::StreamingEventSocketClient;
 use crate::video::gs::{build_client_iroh_pipeline, build_client_udp_pipeline};
-use gstreamer::Pipeline;
-use ::iroh::endpoint::{Connection, RecvStream, SendStream};
 use ::iroh::Endpoint;
+use ::iroh::endpoint::{Connection, RecvStream, SendStream};
+use gstreamer::Pipeline;
 use iroh_tickets::endpoint::EndpointTicket;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{net::AddrParseError, num::ParseIntError};
 use tokio::sync::Mutex;
 use tracing::warn;
-use crate::network::streaming_events_client::StreamingEventSocketClient;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -98,7 +99,8 @@ pub enum ConnectionMode {
     },
     Iroh {
         connection: Option<Connection>,
-        endpoint: Endpoint,
+        streaming_events_stream: Option<IrohStream>,
+        frames_stream: Option<IrohStream>,
         ticket: EndpointTicket,
     },
 }

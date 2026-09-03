@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gstreamer as gst;
-use gstreamer::{prelude::*, Pipeline};
+use gstreamer::{Pipeline, prelude::*};
 use gstreamer_app::{AppSink, AppSrc};
 use tracing::{error, info, warn};
 
@@ -238,11 +238,8 @@ pub fn create_windows_pipeline(
 ) -> Pipeline {
     let video_scale_method = windows_settings.scaling_method.as_gst_method();
 
-    let (scaled_width, scaled_height) = scale_dimensions(
-        windows_settings.resolution as f32,
-        height,
-        width,
-    );
+    let (scaled_width, scaled_height) =
+        scale_dimensions(windows_settings.resolution as f32, height, width);
 
     let pipeline_description = format!(
         "appsrc name={} is-live=true do-timestamp=true format=time \
@@ -282,11 +279,8 @@ pub fn create_windows_pipeline_with_app_dest(
 ) -> Pipeline {
     let video_scale_method = windows_settings.scaling_method.as_gst_method();
 
-    let (scaled_width, scaled_height) = scale_dimensions(
-        windows_settings.resolution as f32,
-        height,
-        width,
-    );
+    let (scaled_width, scaled_height) =
+        scale_dimensions(windows_settings.resolution as f32, height, width);
 
     let pipeline_description = format!(
         "appsrc name={} is-live=true do-timestamp=true format=time \
@@ -315,11 +309,7 @@ pub fn create_windows_pipeline_with_app_dest(
         .expect("Failed to downcast to Pipeline")
 }
 
-fn scale_dimensions(
-    resolution: f32,
-    height: u32,
-    width: u32,
-) -> (u32, u32) {
+fn scale_dimensions(resolution: f32, height: u32, width: u32) -> (u32, u32) {
     let aspect_ratio = width as f32 / height as f32;
 
     let max_height = resolution;

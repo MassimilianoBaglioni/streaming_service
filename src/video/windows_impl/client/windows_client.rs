@@ -1,15 +1,12 @@
 use std::sync::Arc;
-use tokio::sync::mpsc::Receiver;
 
 use crate::network::client_connection::ClientConnection;
-use crate::network::streaming_event::StreamingEvent;
-use crate::network::ConnectionBuildInfo;
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer::{Bus, Pipeline};
 use tracing::info;
 
-// This is not just a proxy for ClientConnection, allows to spawn tasks that need ClientConnection passed using Arc 
+// This is not just a proxy for ClientConnection, allows to spawn tasks that need ClientConnection passed using Arc
 pub struct WindowsClient {
     client_connection: Option<ClientConnection>,
 }
@@ -23,17 +20,6 @@ impl From<ClientConnection> for WindowsClient {
 }
 
 impl WindowsClient {
-    pub fn new(
-        connection_build_info: ConnectionBuildInfo,
-        events_receiver: Receiver<StreamingEvent>,
-    ) -> Self {
-        let client_connection = Some(ClientConnection::new(
-            connection_build_info,
-            Some(events_receiver),
-        ));
-        Self { client_connection }
-    }
-
     pub async fn receive(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let pipeline = Arc::new(
             self.client_connection

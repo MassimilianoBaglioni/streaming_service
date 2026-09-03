@@ -9,7 +9,8 @@ use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
 use crate::video::{gs, windows_impl::windows_streaming_settings::WindowsStreamingSettings};
 use gstreamer::prelude::ElementExt;
 use gstreamer::Sample;
-use gstreamer_app::{AppSink, AppSrc};
+use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use windows::{
     core::{IInspectable, Interface, Ref},
@@ -59,6 +60,7 @@ pub struct WindowsSource {
     app_src: Option<Arc<AppSrc>>,
     app_sink: Option<Arc<AppSink>>,
     pipeline: Option<gstreamer::Pipeline>,
+    cancel_token: CancellationToken, // TODO use this instead of channels when stream stops
 }
 
 impl WindowsSource {
@@ -66,6 +68,7 @@ impl WindowsSource {
         server_connection: ServerConnection,
         graphics_capture_item: Option<GraphicsCaptureItem>,
         windows_settings: WindowsStreamingSettings,
+        cancellation_token: CancellationToken,
     ) -> Self {
         Self {
             connection: Some(Arc::new(Mutex::new(server_connection))),
@@ -77,6 +80,7 @@ impl WindowsSource {
             app_src: None,
             app_sink: None,
             pipeline: None,
+            cancel_token: cancellation_token,
         }
     }
 
@@ -212,6 +216,7 @@ impl WindowsSource {
             WindowsSource::start_sending_frames_iroh(
                 app_sink_clone.unwrap(),
                 self.connection.clone().unwrap(),
+                self.cancel_token.clone(),
             );
         }
 
@@ -231,27 +236,46 @@ impl WindowsSource {
         self.token = Some(token);
     }
 
-    fn start_sending_frames_iroh(app_sink: Arc<AppSink>, connection: Arc<Mutex<ServerConnection>>) {
+    fn start_sending_frames_iroh(
+        app_sink: Arc<AppSink>,
+        connection: Arc<Mutex<ServerConnection>>,
+        cancellation_token: CancellationToken,
+    ) {
         let (sender, receiver) = tokio::sync::mpsc::channel::<Sample>(32);
 
+        let cancel_for_pull = cancellation_token.clone();
         let _frame_sender_thread_handle = tokio::task::spawn_blocking(move || {
             loop {
+                if cancel_for_pull.is_cancelled() {
+                    info!("frame pull thread stopping (cancelled)");
+                    break;
+                }
                 match app_sink.pull_sample() {
                     Ok(sample) => {
                         if sender.blocking_send(sample).is_err() {
-                            break;
+                            break; // receiver dropped, nothing to do
                         }
                     }
                     Err(e) => {
                         error!("{:?}", e);
                         warn!("Error on receiving the sample, before sending");
+                        break; // EOS or sink shut down — no point looping forever
                     }
                 }
             }
         });
 
+        let cancel_for_send = cancellation_token.clone();
         let _iroh_sender_task_handle = tokio::task::spawn(async move {
-            connection.lock().await.send_frames_iroh(receiver).await;
+            tokio::select! {
+            _ = cancel_for_send.cancelled() => {
+                info!("iroh sender task cancelled");
+            }
+            _ = async {
+                let mut conn = connection.lock().await;
+                conn.send_frames_iroh(receiver).await;
+            } => {}
+        }
         });
     }
 
@@ -337,8 +361,9 @@ impl WindowsSource {
             .expect("No connection established cannot close it")
             .lock()
             .await
-            .send_end_event_and_close_conn();
-        
+            .send_end_event_and_close_conn()
+            .await;
+
         self.connection = None;
 
         info!("Streaming stopped");

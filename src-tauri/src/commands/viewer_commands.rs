@@ -1,6 +1,7 @@
 use crate::state::app_state::AppState;
 use iroh_tickets::endpoint::EndpointTicket;
 use streaming_server::network::client_connection::ClientConnection;
+use streaming_server::network::iroh::build_endpoint;
 use streaming_server::network::streaming_event::StreamingEvent;
 use streaming_server::network::ConnectionBuildInfo;
 #[cfg(target_os = "windows")]
@@ -48,7 +49,11 @@ pub async fn start_watching_iroh(
 
     let mut streaming_session = state.streaming_session.lock().await;
     streaming_session.stop_watching_sender = Some(sender.clone());
-    let client_connection = ClientConnection::new_from_ticket_and_recv(ticket, receiver).await;
+
+    let endpoint = state.get_or_create_iroh_endpoint().await.map_err(|e| e.to_string())?;
+
+    let client_connection =
+        ClientConnection::new_from_ticket_and_recv(ticket, receiver, &endpoint).await;
 
     start_watching(app, client_connection).await
 }
@@ -87,7 +92,13 @@ async fn start_watching(app: AppHandle, client_connection: ClientConnection) -> 
 
 #[tauri::command]
 pub async fn stop_watching(state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(sender) = state.streaming_session.lock().await.stop_watching_sender.as_ref() {
+    if let Some(sender) = state
+        .streaming_session
+        .lock()
+        .await
+        .stop_watching_sender
+        .as_ref()
+    {
         sender
             .send(StreamingEvent::ClientQuit)
             .await

@@ -1,8 +1,11 @@
 use tracing::info;
 
 use crate::network::streaming_event::StreamingEvent;
+use iroh::endpoint::{RecvStream, SendStream};
 use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub struct StreamingEventSocketServer {
     // Listens for incoming connections
@@ -60,5 +63,32 @@ impl StreamingEventSocketServer {
         if let Some(stream) = self.stream.take() {
             let _ = stream.shutdown(Shutdown::Both);
         }
+    }
+}
+
+pub struct IrohEventsStream {
+    send_stream: Arc<Mutex<SendStream>>,
+    recv_stream: Arc<Mutex<RecvStream>>,
+}
+
+impl IrohEventsStream {
+    pub(crate) fn new(send_stream: SendStream, recv_stream: RecvStream) -> Self {
+        Self {
+            send_stream: Arc::new(Mutex::new(send_stream)),
+            recv_stream: Arc::new(Mutex::new(recv_stream)),
+        }
+    }
+
+    pub async fn get_send_lock(&self) -> tokio::sync::MutexGuard<'_, SendStream> {
+        self.send_stream.lock().await
+    }
+
+    pub async fn send_event(&mut self, event: &StreamingEvent) -> std::io::Result<()> {
+        let payload = serde_json::to_vec(event).expect("serialise");
+        let len = payload.len() as u32;
+        let mut send_stream = self.send_stream.lock().await;
+        send_stream.write_all(&len.to_be_bytes()).await?;
+        send_stream.write_all(&payload).await?;
+        Ok(())
     }
 }

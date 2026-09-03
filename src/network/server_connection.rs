@@ -1,6 +1,6 @@
-use crate::network::iroh::FramesStreaming;
+use crate::network::iroh::IrohStream;
 use crate::network::streaming_event::StreamingEvent;
-use crate::network::streaming_events_server::StreamingEventSocketServer;
+use crate::network::streaming_events_server::{IrohEventsStream, StreamingEventSocketServer};
 use crate::network::ConnectionBuildInfo;
 use anyhow::Context;
 use gstreamer::Sample;
@@ -17,10 +17,98 @@ pub enum ServerConnectionMode {
         client_streaming_port: u16,
     },
     Iroh {
-        frames_stream: FramesStreaming,
-        endpoint: Endpoint,
+        frames_stream: IrohStream,
+        events_stream: IrohEventsStream,
         iroh_connection: Connection,
     },
+}
+
+impl ServerConnectionMode {
+    pub async fn close_connection(&mut self) {
+        match self {
+            ServerConnectionMode::Direct { server_socket, .. } => {
+                if let Some(mut socket) = server_socket.take() {
+                    socket.disconnect();
+                }
+            }
+            ServerConnectionMode::Iroh {
+                frames_stream,
+                events_stream,
+                iroh_connection,
+                ..
+            } => {
+                {
+                    let mut send = events_stream.get_send_lock().await;
+                    if let Err(e) = send.finish() {
+                        warn!("Failed to finish events stream: {:?}", e);
+                    }
+                    if let Err(e) = send.stopped().await {
+                        warn!("events stream not confirmed received: {:?}", e);
+                    }
+                }
+
+                {
+                    let mut send = frames_stream.get_send_lock().await;
+                    if let Err(e) = send.finish() {
+                        warn!("Failed to finish frames stream: {:?}", e);
+                    }
+                    if let Err(e) = send.stopped().await {
+                        warn!("frames stream not confirmed received: {:?}", e);
+                    }
+                }
+
+                iroh_connection.close(0u32.into(), b"session ended");
+                iroh_connection.closed().await;
+            }
+        }
+    }
+
+    pub fn accept(&mut self) {
+        match self {
+            ServerConnectionMode::Direct {
+                server_socket,
+                client_address,
+                ..
+            } => {
+                if server_socket.is_none() {
+                    *server_socket = Some(
+                        StreamingEventSocketServer::bind(*client_address)
+                            .expect("Could not bind the socket"),
+                    );
+                }
+                tokio::task::block_in_place(|| server_socket.as_mut().unwrap().accept())
+                    .expect("Failed to accept client");
+
+                // Accept a client (closes previous connection if any and waits for a new one)
+                info!("Accepted client");
+            }
+            ServerConnectionMode::Iroh { .. } => {
+                info!("Iroh server connection is already established, no need to accept");
+            }
+        }
+    }
+
+    pub async fn send_event(&mut self, streaming_event: StreamingEvent) {
+        match self {
+            ServerConnectionMode::Direct { server_socket, .. } => {
+                match server_socket.as_mut().unwrap().send_event(&streaming_event) {
+                    Ok(_) => info!("Sent End event"),
+                    Err(e) => warn!("Failed to send End event: {:?}", e),
+                }
+
+                info!("Streaming stopped");
+            }
+            ServerConnectionMode::Iroh { events_stream, .. } => {
+                info!("Sending event via Iroh connection");
+                events_stream
+                    .send_event(&streaming_event)
+                    .await
+                    .expect("Failed to send event");
+
+                info!("Streaming stopped");
+            }
+        }
+    }
 }
 
 impl From<ConnectionBuildInfo> for ServerConnectionMode {
@@ -56,61 +144,20 @@ impl From<ConnectionBuildInfo> for ServerConnection {
 
 impl ServerConnection {
     pub async fn accept(&mut self) {
-        match &mut self.connection_mode {
-            ServerConnectionMode::Direct {
-                server_socket,
-                client_address,
-                ..
-            } => {
-                if server_socket.is_none() {
-                    *server_socket = Some(
-                        StreamingEventSocketServer::bind(*client_address)
-                            .expect("Could not bind the socket"),
-                    );
-                }
-                tokio::task::block_in_place(|| server_socket.as_mut().unwrap().accept())
-                    .expect("Failed to accept client");
-
-                // Accept a client (closes previous connection if any and waits for a new one)
-                info!("Accepted client");
-            }
-            ServerConnectionMode::Iroh { .. } => {
-                info!("Iroh server connection is already established, no need to accept");
-            }
-        }
+        self.connection_mode.accept();
     }
 
-    pub fn send_event(&mut self, streaming_event: StreamingEvent) {
-        match &mut self.connection_mode {
-            ServerConnectionMode::Direct { server_socket, .. } => {
-                match server_socket.as_mut().unwrap().send_event(&streaming_event) {
-                    Ok(_) => info!("Sent End event"),
-                    Err(e) => warn!("Failed to send End event: {:?}", e),
-                }
-
-                info!("Streaming stopped");
-            }
-            ServerConnectionMode::Iroh { .. } => todo!(),
-        }
+    pub async fn send_event(&mut self, streaming_event: StreamingEvent) {
+        self.connection_mode.send_event(streaming_event).await;
     }
 
-    fn close_conn(&mut self) {
-        match &mut self.connection_mode {
-            ServerConnectionMode::Direct { server_socket, .. } => {
-                // Take leaves None after the block is executed
-                if let Some(mut socket) = server_socket.take() {
-                    socket.disconnect();
-                }
-            }
-            ServerConnectionMode::Iroh { .. } => {
-                todo!();
-            }
-        }
+    async fn close_conn(&mut self) {
+        self.connection_mode.close_connection().await;
     }
 
-    pub fn send_end_event_and_close_conn(&mut self) {
-        self.send_event(StreamingEvent::ServerEndsStream);
-        self.close_conn();
+    pub async fn send_end_event_and_close_conn(&mut self) {
+        self.send_event(StreamingEvent::ServerEndsStream).await;
+        self.close_conn().await;
     }
 
     pub async fn send_frames_iroh(&mut self, mut recv: Receiver<Sample>) {

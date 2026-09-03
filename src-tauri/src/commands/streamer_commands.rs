@@ -1,17 +1,20 @@
 use crate::state::app_state::{AppState, StreamingSession};
 #[cfg(target_os = "windows")]
 use crate::windows_impl::show_picker;
+use iroh::endpoint::presets;
+use iroh::Endpoint;
 use iroh_tickets::endpoint::EndpointTicket;
 use serde::Deserialize;
 use streaming_server::video::video_source::VideoSourceKind;
 use tauri::{AppHandle, State};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use windows::Graphics::Capture::GraphicsCaptureItem;
 
 use streaming_server::network::ConnectionBuildInfo;
 use streaming_server::video::windows_impl::windows_streaming_settings::WindowsStreamingSettings;
 
-use streaming_server::network::iroh::{build_ticket, establish_iroh_server_connection};
+use streaming_server::network::iroh::{build_endpoint, establish_iroh_server_connection};
 use streaming_server::network::server_connection::ServerConnection;
 use streaming_server::video::commons::scaling_method::ScalingMethod;
 use streaming_server::video::windows_impl::windows_source::WindowsSource;
@@ -144,6 +147,7 @@ async fn start_streaming(
 ) -> Result<(), String> {
     // This must stay AFTER async calls, can't lock with async functions
     let mut streaming_session = state.streaming_session.lock().await;
+    streaming_session.cancel_token = Some(CancellationToken::new());
 
     let windows_streaming_settings = map_windows_settings(&video_settings);
 
@@ -151,6 +155,7 @@ async fn start_streaming(
         server_connection,
         Some(graphics_capture_item),
         windows_streaming_settings,
+        streaming_session.cancel_token.as_mut().unwrap().clone(),
     ));
 
     streaming_session.video_source = Some(new_source);
@@ -183,21 +188,32 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
         warn!("No video source obj to stop the stream");
     }
 
-    *state.streaming_session.lock().await = StreamingSession::default();
-    info!("Stop streaming flag set to true");
+    {
+        let mut session = state.streaming_session.lock().await;
+        session
+            .cancel_token
+            .as_mut()
+            .expect("No cancellation token set")
+            .cancel();
+        *session = StreamingSession::default();
+        info!("Stop streaming flag set to true");
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
-    let (ticket, endpoint) = build_ticket().await.expect("Failed to generate ticket");
+    let endpoint = state.get_or_create_iroh_endpoint().await.map_err(|e| e.to_string())?;
+
+    let ticket = EndpointTicket::new(endpoint.addr());
 
     let streaming_session = state.streaming_session.clone();
     let stream_session_clone = streaming_session.clone();
+    let endpoint_clone = endpoint.clone();
 
     let iroh_connection_task_handler = tokio::spawn(async move {
         info!("Generate ticket routine started");
-        let server_connection = establish_iroh_server_connection(endpoint).await?;
+        let server_connection = establish_iroh_server_connection(endpoint_clone).await?;
 
         stream_session_clone.lock().await.server_connection = Some(server_connection);
         Ok(())
