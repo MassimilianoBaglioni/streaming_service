@@ -32,7 +32,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
-        .manage(AppState::default())
+        .manage::<AppState>(AppState::default())
         .invoke_handler(tauri::generate_handler![
             start_streaming_direct,
             start_streaming_iroh,

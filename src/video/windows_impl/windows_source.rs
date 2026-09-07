@@ -9,7 +9,7 @@ use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
 use crate::video::{gs, windows_impl::windows_streaming_settings::WindowsStreamingSettings};
 use gstreamer::prelude::ElementExt;
 use gstreamer::Sample;
-use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
+use gstreamer_app::{AppSink, AppSrc};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use windows::{
@@ -268,14 +268,14 @@ impl WindowsSource {
         let cancel_for_send = cancellation_token.clone();
         let _iroh_sender_task_handle = tokio::task::spawn(async move {
             tokio::select! {
-            _ = cancel_for_send.cancelled() => {
-                info!("iroh sender task cancelled");
+                _ = cancel_for_send.cancelled() => {
+                    info!("iroh sender task cancelled");
+                }
+                _ = async {
+                    let mut conn = connection.lock().await;
+                    conn.send_frames_iroh(receiver).await;
+                } => {}
             }
-            _ = async {
-                let mut conn = connection.lock().await;
-                conn.send_frames_iroh(receiver).await;
-            } => {}
-        }
         });
     }
 
@@ -478,13 +478,6 @@ impl FrameArrivedHandler {
 
         {
             let buffer_ref = gst_buffer.get_mut().unwrap();
-
-            // let timestamp = frame
-            //     .SystemRelativeTime()
-            //     .expect("Error on systemRelative")
-            //     .Duration;
-            //
-            // buffer_ref.set_pts(gstreamer::ClockTime::from_nseconds(timestamp as u64 * 100));
 
             let mut map = buffer_ref
                 .map_writable()

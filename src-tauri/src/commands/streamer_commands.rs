@@ -1,8 +1,6 @@
 use crate::state::app_state::{AppState, StreamingSession};
 #[cfg(target_os = "windows")]
 use crate::windows_impl::show_picker;
-use iroh::endpoint::presets;
-use iroh::Endpoint;
 use iroh_tickets::endpoint::EndpointTicket;
 use serde::Deserialize;
 use streaming_server::video::video_source::VideoSourceKind;
@@ -14,7 +12,7 @@ use windows::Graphics::Capture::GraphicsCaptureItem;
 use streaming_server::network::ConnectionBuildInfo;
 use streaming_server::video::windows_impl::windows_streaming_settings::WindowsStreamingSettings;
 
-use streaming_server::network::iroh::{build_endpoint, establish_iroh_server_connection};
+use streaming_server::network::iroh::establish_iroh_server_connection;
 use streaming_server::network::server_connection::ServerConnection;
 use streaming_server::video::commons::scaling_method::ScalingMethod;
 use streaming_server::video::windows_impl::windows_source::WindowsSource;
@@ -203,7 +201,10 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, String> {
-    let endpoint = state.get_or_create_iroh_endpoint().await.map_err(|e| e.to_string())?;
+    let endpoint = state
+        .get_or_create_iroh_endpoint()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let ticket = EndpointTicket::new(endpoint.addr());
 

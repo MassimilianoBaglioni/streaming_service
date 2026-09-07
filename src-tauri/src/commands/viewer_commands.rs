@@ -1,7 +1,6 @@
 use crate::state::app_state::AppState;
 use iroh_tickets::endpoint::EndpointTicket;
 use streaming_server::network::client_connection::ClientConnection;
-use streaming_server::network::iroh::build_endpoint;
 use streaming_server::network::streaming_event::StreamingEvent;
 use streaming_server::network::ConnectionBuildInfo;
 #[cfg(target_os = "windows")]
@@ -50,7 +49,10 @@ pub async fn start_watching_iroh(
     let mut streaming_session = state.streaming_session.lock().await;
     streaming_session.stop_watching_sender = Some(sender.clone());
 
-    let endpoint = state.get_or_create_iroh_endpoint().await.map_err(|e| e.to_string())?;
+    let endpoint = state
+        .get_or_create_iroh_endpoint()
+        .await
+        .map_err(|e| e.to_string())?;
 
     let client_connection =
         ClientConnection::new_from_ticket_and_recv(ticket, receiver, &endpoint).await;

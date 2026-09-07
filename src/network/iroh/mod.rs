@@ -1,9 +1,8 @@
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
-use crate::network::streaming_events_server::IrohEventsStream;
+use crate::network::streaming_event::{EventsTransport, StreamingEvent};
 use anyhow::{anyhow, Result};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{endpoint::presets, Endpoint};
-use iroh_tickets::endpoint::EndpointTicket;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -12,7 +11,6 @@ const FRAMES_TAG: u8 = 0;
 const EVENTS_TAG: u8 = 1;
 
 pub mod connection;
-
 pub(crate) const ALPN: &[u8] = b"myapp/test/1";
 
 pub async fn build_endpoint() -> Result<Endpoint> {
@@ -43,11 +41,13 @@ pub async fn establish_iroh_server_connection(endpoint: Endpoint) -> Result<Serv
 
     info!("Opened bi connection on the server");
 
+    let events_connection = Some(EventsTransport::new(recv_events_stream, send_events_stream));
+
     Ok(ServerConnection {
         connection_mode: ServerConnectionMode::Iroh {
             frames_stream: IrohStream::new(send_frames_stream, recv_frames_stream),
-            events_stream: IrohEventsStream::new(send_events_stream, recv_events_stream),
             iroh_connection,
+            events_connection,
         },
     })
 }
@@ -80,5 +80,14 @@ impl IrohStream {
 
     pub async fn get_recv_lock(&self) -> tokio::sync::MutexGuard<'_, RecvStream> {
         self.recv_stream.lock().await
+    }
+
+    pub async fn send_event(&mut self, event: &StreamingEvent) -> std::io::Result<()> {
+        let payload = serde_json::to_vec(event).expect("serialise");
+        let len = payload.len() as u32;
+        let mut send_stream = self.send_stream.lock().await;
+        send_stream.write_all(&len.to_be_bytes()).await?;
+        send_stream.write_all(&payload).await?;
+        Ok(())
     }
 }

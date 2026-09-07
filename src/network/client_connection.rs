@@ -1,19 +1,17 @@
 use crate::network::iroh::connection::receive_frames_iroh;
 use crate::network::iroh::{IrohStream, ALPN};
-use crate::network::streaming_event::StreamingEvent;
-use crate::network::streaming_events_client::{
-    EventsReceiver, StreamingEventIrohClient, StreamingEventSocketClient,
-};
+use crate::network::streaming_event::{EventsTransport, StreamingEvent};
+use crate::network::streaming_events_client::StreamingEventsSocketClient;
 use crate::network::{ConnectionBuildInfo, ConnectionMode};
 use crate::video::gs;
 use gstreamer::prelude::ElementExt;
 use gstreamer::{Bus, Pipeline};
 use gstreamer_app::gst;
-use iroh::endpoint::{presets, Connection, RecvStream, SendStream};
+use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::Endpoint;
 use iroh_tickets::endpoint::EndpointTicket;
-use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -32,7 +30,7 @@ impl ClientConnection {
         frontend_events_receiver: Receiver<StreamingEvent>,
         endpoint: &Endpoint,
     ) -> Self {
-        let connection = ClientConnection::iroh_connect(&ticket, &endpoint).await;
+        let connection = ClientConnection::iroh_connect(&ticket, endpoint).await;
 
         ClientConnection {
             connection_mode: ConnectionMode::Iroh {
@@ -57,7 +55,7 @@ impl ClientConnection {
             } => {
                 let connection_mode = ConnectionMode::Direct {
                     socket_addr: tcp_socket_address,
-                    streaming_events_socket_client: None,
+                    streaming_events_stream: None,
                     watcher_stream_port,
                 };
 
@@ -67,9 +65,7 @@ impl ClientConnection {
                     pipeline: None,
                 }
             }
-            ConnectionBuildInfo::Iroh {
-                endpoint, ticket, ..
-            } => {
+            ConnectionBuildInfo::Iroh { ticket, .. } => {
                 let connection_mode = ConnectionMode::Iroh {
                     connection: None,
                     streaming_events_stream: None,
@@ -88,11 +84,13 @@ impl ClientConnection {
         match &mut self.connection_mode {
             ConnectionMode::Direct {
                 socket_addr,
-                streaming_events_socket_client,
+                streaming_events_stream,
                 ..
             } => {
-                *streaming_events_socket_client = Some(Arc::new(Mutex::new(
-                    ClientConnection::direct_connect(*socket_addr)?,
+                *streaming_events_stream = Some(Arc::new(Mutex::new(
+                    StreamingEventsSocketClient::connect(*socket_addr)
+                        .await
+                        .expect("Failed to connect to the streaming events socket"),
                 )));
 
                 Ok(())
@@ -102,12 +100,6 @@ impl ClientConnection {
                 Ok(())
             }
         }
-    }
-
-    fn direct_connect(socket_addr: SocketAddr) -> std::io::Result<StreamingEventSocketClient> {
-        tokio::task::block_in_place(|| {
-            StreamingEventSocketClient::connect(&socket_addr.to_string())
-        })
     }
 
     async fn iroh_connect(ticket: &EndpointTicket, endpoint: &Endpoint) -> Connection {
@@ -140,10 +132,10 @@ impl ClientConnection {
 
         match &mut self.connection_mode {
             ConnectionMode::Direct {
-                streaming_events_socket_client,
+                streaming_events_stream,
                 ..
             } => {
-                let streaming_events_stream = streaming_events_socket_client
+                let streaming_events_stream = streaming_events_stream
                     .as_mut()
                     .expect("No streaming events socket client found")
                     .clone();
@@ -170,27 +162,26 @@ impl ClientConnection {
                     .await;
                 });
 
-                let streaming_events_stream = streaming_events_stream.take();
-                let iroh_events_stream = StreamingEventIrohClient {
-                    recv: streaming_events_stream
-                        .expect("No streaming events stream found")
-                        .recv_stream,
-                };
+                let streaming_events_stream = streaming_events_stream
+                    .take()
+                    .expect("No streaming events stream found");
 
-                self.handle_events(bus_clone, Arc::new(Mutex::new(iroh_events_stream)))
+                self.handle_events(bus_clone, Arc::new(Mutex::new(streaming_events_stream)))
                     .await;
 
-                // TODO, check if this causes problems.
                 receive_frames_handler.abort();
             }
         }
     }
 
-    async fn handle_events<T: EventsReceiver + Send + 'static>(
+    async fn handle_events<R, W>(
         &mut self,
         bus: Bus,
-        receiver: Arc<Mutex<T>>,
-    ) {
+        events_channel: Arc<Mutex<EventsTransport<R, W>>>,
+    ) where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         // With "take()" we are moving the ownership away from the struct, since it is inside self, and we need it in the task.
         // Only the receiver needs this because it is single consumer, we could use tokio::sync::broadcast that allows cloning, but I don't like it now.
         let mut frontend_receiver_clone = self
@@ -201,13 +192,10 @@ impl ClientConnection {
         // Thread checking for streaming events that can stop the stream
         let mut streaming_events_handler = tokio::spawn(async move {
             info!("Starting the streaming events handler task");
-            let mut events_receiver = receiver.lock().await;
+            let mut ev_channel = events_channel.lock().await;
 
             loop {
-                let event = events_receiver
-                    .read_event()
-                    .await
-                    .expect("Failed to read event");
+                let event = ev_channel.read_event().await.expect("Failed to read event");
 
                 match event {
                     StreamingEvent::ServerEndsStream => {
@@ -227,6 +215,7 @@ impl ClientConnection {
                 match event {
                     StreamingEvent::ClientQuit => {
                         info!("Received Quit event, from frontend, stopping");
+                        // TODO send stop watching event to the server now
                         return;
                     }
                     other => {
@@ -279,7 +268,7 @@ impl ClientConnection {
     async fn accept_connections(
         connection: &Option<Connection>,
         frames_stream: &mut Option<IrohStream>,
-        streaming_events_stream: &mut Option<IrohStream>,
+        streaming_events_stream: &mut Option<EventsTransport<RecvStream, SendStream>>,
     ) {
         info!("Iroh accepting connection bi on client");
 
@@ -295,107 +284,11 @@ impl ClientConnection {
                     info!("Accepted frames stream");
                 }
                 EVENTS_TAG => {
-                    *streaming_events_stream = IrohStream::new(send, recv).into();
+                    *streaming_events_stream = Some(EventsTransport::new(recv, send));
                     info!("Accepted events stream");
                 }
                 other => warn!("Unknown stream tag: {other}"),
             }
         }
     }
-
-    // async fn handle_events_direct(&mut self, bus: Bus) {
-    //     // With "take()" we are moving the ownership away from the struct, since it is inside self, and we need it in the task.
-    //     // Only the receiver needs this because it is single consumer, we could use tokio::sync::broadcast that allows cloning, but I don't like it now.
-    //     let mut frontend_receiver_clone = self
-    //         .frontend_events_receiver
-    //         .take()
-    //         .expect("No receiver found");
-    //
-    //     let socket_receiver_clone = match &self.connection_mode {
-    //         ConnectionMode::Direct {
-    //             streaming_events_socket_client,
-    //             ..
-    //         } => streaming_events_socket_client
-    //             .as_ref()
-    //             .expect("No socket for event handling")
-    //             .clone(),
-    //         ConnectionMode::Iroh { .. } => {
-    //             warn!("Iroh connection mode is not supported for direct event handling");
-    //             return;
-    //         }
-    //     };
-    //
-    //     // Thread checking for socket events that can stop the stream
-    //     // Spawn it before the loop to avoid ownership issues
-    //     let mut socket_events_handler = tokio::spawn(async move {
-    //         info!("Starting the socket events handler task");
-    //         let mut socket = socket_receiver_clone.lock().await;
-    //         while let Ok(event) = socket.read_event() {
-    //             match event {
-    //                 StreamingEvent::ServerEndsStream => {
-    //                     info!("Received End event, from tcp socket");
-    //                     return;
-    //                 }
-    //                 other => {
-    //                     warn!("Received unexpected event: {:?}, from tcp socket", other);
-    //                 }
-    //             }
-    //         }
-    //     });
-    //
-    //     let mut frontend_events_handler = tokio::spawn(async move {
-    //         info!("Starting the frontend events handler task");
-    //         while let Some(event) = frontend_receiver_clone.recv().await {
-    //             match event {
-    //                 StreamingEvent::ClientQuit => {
-    //                     info!("Received Quit event, from frontend, stopping");
-    //                     return;
-    //                 }
-    //                 other => {
-    //                     warn!("Received unexpected event: {:?}, from tcp socket", other);
-    //                 }
-    //             }
-    //         }
-    //     });
-    //
-    //     let mut gst_listener_task_handler = tokio::task::spawn_blocking(move || {
-    //         info!("Starting the gst listener task");
-    //         loop {
-    //             if let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) {
-    //                 match msg.view() {
-    //                     gst::MessageView::Eos(e) => {
-    //                         info!("Eos received, stopping the stream! {:?}", e);
-    //                         break;
-    //                     }
-    //                     gst::MessageView::Error(_err) => {
-    //                         error!("Error case");
-    //                         break;
-    //                     }
-    //                     gst::MessageView::Warning(w) => {
-    //                         warn!("{:?}", w);
-    //                     }
-    //                     _ => {}
-    //                 }
-    //             }
-    //         }
-    //     });
-    //
-    //     tokio::select! {
-    //         _result = &mut socket_events_handler => {
-    //             info!("Socket events handler stopped the client.");
-    //             gst_listener_task_handler.abort();
-    //             frontend_events_handler.abort();
-    //         }
-    //         _result = &mut gst_listener_task_handler => {
-    //             info!("Gst listener task handler stopped the client.");
-    //             socket_events_handler.abort();
-    //             frontend_events_handler.abort();
-    //         }
-    //         _result = &mut frontend_events_handler => {
-    //             info!("Frontend events handler stopped the client.");
-    //             socket_events_handler.abort();
-    //             gst_listener_task_handler.abort();
-    //         }
-    //     }
-    // }
 }
