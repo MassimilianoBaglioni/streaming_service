@@ -1,5 +1,5 @@
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
-use crate::network::streaming_event::{EventsTransport, StreamingEvent};
+use crate::network::streaming_event::{StreamingEvent, Transport};
 use anyhow::{anyhow, Result};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{endpoint::presets, Endpoint};
@@ -41,7 +41,7 @@ pub async fn establish_iroh_server_connection(endpoint: Endpoint) -> Result<Serv
 
     info!("Opened bi connection on the server");
 
-    let events_connection = Some(EventsTransport::new(recv_events_stream, send_events_stream));
+    let events_connection = Some(Transport::new(recv_events_stream, send_events_stream));
 
     Ok(ServerConnection {
         connection_mode: ServerConnectionMode::Iroh {
@@ -80,14 +80,5 @@ impl IrohStream {
 
     pub async fn get_recv_lock(&self) -> tokio::sync::MutexGuard<'_, RecvStream> {
         self.recv_stream.lock().await
-    }
-
-    pub async fn send_event(&mut self, event: &StreamingEvent) -> std::io::Result<()> {
-        let payload = serde_json::to_vec(event).expect("serialise");
-        let len = payload.len() as u32;
-        let mut send_stream = self.send_stream.lock().await;
-        send_stream.write_all(&len.to_be_bytes()).await?;
-        send_stream.write_all(&payload).await?;
-        Ok(())
     }
 }

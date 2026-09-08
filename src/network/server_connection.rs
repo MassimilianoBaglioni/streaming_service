@@ -1,5 +1,5 @@
 use crate::network::iroh::IrohStream;
-use crate::network::streaming_event::{EventsTransport, StreamingEvent};
+use crate::network::streaming_event::{StreamingEvent, Transport};
 use crate::network::streaming_events_server::StreamingEventsSocketServer;
 use crate::network::ConnectionBuildInfo;
 use anyhow::Context;
@@ -14,12 +14,12 @@ pub enum ServerConnectionMode {
     Direct {
         client_address: SocketAddr,
         client_streaming_port: u16,
-        events_connection: Option<EventsTransport<OwnedReadHalf, OwnedWriteHalf>>,
+        events_connection: Option<Transport<OwnedReadHalf, OwnedWriteHalf>>,
     },
     Iroh {
         frames_stream: IrohStream,
         iroh_connection: Connection,
-        events_connection: Option<EventsTransport<RecvStream, SendStream>>,
+        events_connection: Option<Transport<RecvStream, SendStream>>,
     },
 }
 
@@ -90,7 +90,7 @@ impl ServerConnection {
                 events_connection
                     .as_mut()
                     .unwrap()
-                    .send_event(&streaming_event)
+                    .send(&streaming_event)
                     .await
                     .expect("Failed to send event");
             }
@@ -100,7 +100,7 @@ impl ServerConnection {
                 events_connection
                     .as_mut()
                     .unwrap()
-                    .send_event(&streaming_event)
+                    .send(&streaming_event)
                     .await
                     .expect("Failed to send event");
             }

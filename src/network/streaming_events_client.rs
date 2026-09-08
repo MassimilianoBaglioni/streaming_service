@@ -1,4 +1,4 @@
-use crate::network::streaming_event::EventsTransport;
+use crate::network::streaming_event::Transport;
 use std::net::SocketAddr;
 
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -10,13 +10,13 @@ pub struct StreamingEventsSocketClient;
 impl StreamingEventsSocketClient {
     pub async fn connect(
         address: SocketAddr,
-    ) -> std::io::Result<EventsTransport<OwnedReadHalf, OwnedWriteHalf>> {
+    ) -> std::io::Result<Transport<OwnedReadHalf, OwnedWriteHalf>> {
         let stream = TcpStream::connect(address).await?;
 
         info!("Connected to {:?}", address);
 
         let (recv, send) = stream.into_split();
 
-        Ok(EventsTransport::new(recv, send))
+        Ok(Transport::new(recv, send))
     }
 }

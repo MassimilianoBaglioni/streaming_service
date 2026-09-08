@@ -1,19 +1,18 @@
 use std::net::IpAddr;
 use std::ptr::null_mut;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
 use crate::video::{gs, windows_impl::windows_streaming_settings::WindowsStreamingSettings};
-use gstreamer::prelude::ElementExt;
 use gstreamer::Sample;
+use gstreamer::prelude::ElementExt;
 use gstreamer_app::{AppSink, AppSrc};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use windows::{
-    core::{IInspectable, Interface, Ref},
     Foundation::TypedEventHandler,
     Graphics::{
         Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession},
@@ -25,17 +24,18 @@ use windows::{
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_HARDWARE,
             Direct3D11::{
-                D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
-                ID3D11Texture2D, D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-                D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+                D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+                D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING, D3D11CreateDevice, ID3D11Device,
+                ID3D11DeviceContext, ID3D11Texture2D,
             },
             Dxgi::IDXGIDevice,
-            Dxgi::{IDXGISurface, DXGI_MAPPED_RECT, DXGI_MAP_READ},
+            Dxgi::{DXGI_MAP_READ, DXGI_MAPPED_RECT, IDXGISurface},
         },
         System::WinRT::Direct3D11::{
             CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
         },
     },
+    core::{IInspectable, Interface, Ref},
 };
 
 struct SendWrapper<T>(T);

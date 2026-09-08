@@ -1,6 +1,6 @@
 use crate::network::iroh::connection::receive_frames_iroh;
 use crate::network::iroh::{IrohStream, ALPN};
-use crate::network::streaming_event::{EventsTransport, StreamingEvent};
+use crate::network::streaming_event::{StreamingEvent, Transport};
 use crate::network::streaming_events_client::StreamingEventsSocketClient;
 use crate::network::{ConnectionBuildInfo, ConnectionMode};
 use crate::video::gs;
@@ -155,11 +155,19 @@ impl ClientConnection {
                 // Take ownership, the Client connection won't need it anymore, just hand it to the task
                 let mut frames_stream = frames_stream.take();
                 let receive_frames_handler = tokio::spawn(async move {
-                    receive_frames_iroh(
+                    match receive_frames_iroh(
                         &mut *frames_stream.as_mut().unwrap().get_recv_lock().await,
                         app_src,
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(()) => {
+                            info!("Finished receiving frames");
+                        }
+                        Err(e) => {
+                            error!("Error receiving frames: {:?}", e);
+                        }
+                    }
                 });
 
                 let streaming_events_stream = streaming_events_stream
@@ -174,11 +182,8 @@ impl ClientConnection {
         }
     }
 
-    async fn handle_events<R, W>(
-        &mut self,
-        bus: Bus,
-        events_channel: Arc<Mutex<EventsTransport<R, W>>>,
-    ) where
+    async fn handle_events<R, W>(&mut self, bus: Bus, events_channel: Arc<Mutex<Transport<R, W>>>)
+    where
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
@@ -195,7 +200,7 @@ impl ClientConnection {
             let mut ev_channel = events_channel.lock().await;
 
             loop {
-                let event = ev_channel.read_event().await.expect("Failed to read event");
+                let event = ev_channel.read().await.expect("Failed to read event");
 
                 match event {
                     StreamingEvent::ServerEndsStream => {
@@ -268,7 +273,7 @@ impl ClientConnection {
     async fn accept_connections(
         connection: &Option<Connection>,
         frames_stream: &mut Option<IrohStream>,
-        streaming_events_stream: &mut Option<EventsTransport<RecvStream, SendStream>>,
+        streaming_events_stream: &mut Option<Transport<RecvStream, SendStream>>,
     ) {
         info!("Iroh accepting connection bi on client");
 
@@ -284,7 +289,7 @@ impl ClientConnection {
                     info!("Accepted frames stream");
                 }
                 EVENTS_TAG => {
-                    *streaming_events_stream = Some(EventsTransport::new(recv, send));
+                    *streaming_events_stream = Some(Transport::new(recv, send));
                     info!("Accepted events stream");
                 }
                 other => warn!("Unknown stream tag: {other}"),
