@@ -1,5 +1,5 @@
 use crate::network::iroh::connection::receive_frames_iroh;
-use crate::network::iroh::{IrohStream, ALPN};
+use crate::network::iroh::ALPN;
 use crate::network::streaming_event::{StreamingEvent, Transport};
 use crate::network::streaming_events_client::StreamingEventsSocketClient;
 use crate::network::{ConnectionBuildInfo, ConnectionMode};
@@ -153,14 +153,9 @@ impl ClientConnection {
                 let app_src = gs::get_app_src(self.pipeline.as_ref().unwrap()).clone();
 
                 // Take ownership, the Client connection won't need it anymore, just hand it to the task
-                let mut frames_stream = frames_stream.take();
+                let frames_stream = frames_stream.take();
                 let receive_frames_handler = tokio::spawn(async move {
-                    match receive_frames_iroh(
-                        &mut *frames_stream.as_mut().unwrap().get_recv_lock().await,
-                        app_src,
-                    )
-                    .await
-                    {
+                    match receive_frames_iroh(&mut frames_stream.unwrap(), app_src).await {
                         Ok(()) => {
                             info!("Finished receiving frames");
                         }
@@ -200,7 +195,10 @@ impl ClientConnection {
             let mut ev_channel = events_channel.lock().await;
 
             loop {
-                let event = ev_channel.read().await.expect("Failed to read event");
+                let event = ev_channel
+                    .read_serializable()
+                    .await
+                    .expect("Failed to read event");
 
                 match event {
                     StreamingEvent::ServerEndsStream => {
@@ -272,7 +270,7 @@ impl ClientConnection {
     }
     async fn accept_connections(
         connection: &Option<Connection>,
-        frames_stream: &mut Option<IrohStream>,
+        frames_stream: &mut Option<Transport<RecvStream, SendStream>>,
         streaming_events_stream: &mut Option<Transport<RecvStream, SendStream>>,
     ) {
         info!("Iroh accepting connection bi on client");
@@ -285,7 +283,7 @@ impl ClientConnection {
                 .expect("Failed to accept connection");
             match tag {
                 FRAMES_TAG => {
-                    *frames_stream = IrohStream::new(send, recv).into();
+                    *frames_stream = Some(Transport::new(recv, send));
                     info!("Accepted frames stream");
                 }
                 EVENTS_TAG => {

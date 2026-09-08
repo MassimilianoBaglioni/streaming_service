@@ -1,6 +1,7 @@
+use crate::network::streaming_event::{TransmissionError, Transport};
 use bytes::{Buf, BytesMut};
 use gstreamer_app::AppSrc;
-use iroh::endpoint::RecvStream;
+use iroh::endpoint::{RecvStream, SendStream};
 use thiserror::Error;
 use tracing::{error, info};
 
@@ -16,10 +17,12 @@ pub enum FrameReceiveError {
     Buffer(String),
     #[error("gstreamer push_buffer failed: {0}")]
     Push(#[from] gstreamer::FlowError),
+    #[error("transmission failed: {0}")]
+    Transmission(#[from] TransmissionError),
 }
 
 pub async fn receive_frames_iroh(
-    recv: &mut RecvStream,
+    recv: &mut Transport<RecvStream, SendStream>,
     appsrc: AppSrc,
 ) -> Result<(), FrameReceiveError> {
     let mut read_buf = [0u8; 64 * 1024];
@@ -28,8 +31,8 @@ pub async fn receive_frames_iroh(
     info!("Starting to receive frames from iroh connection");
 
     loop {
-        match recv.read(&mut read_buf).await? {
-            Some(n) => {
+        match recv.read(&mut read_buf).await {
+            Ok(n) => {
                 pending.extend_from_slice(&read_buf[..n]);
 
                 while pending.len() >= 4 {
@@ -59,9 +62,9 @@ pub async fn receive_frames_iroh(
                     appsrc.push_buffer(gst_buffer)?;
                 }
             }
-            None => {
-                info!("Stream finished");
-                return Ok(());
+            Err(e) => {
+                error!("Error reading from iroh connection: {}", e);
+                return Err(FrameReceiveError::Transmission(e));
             }
         }
     }

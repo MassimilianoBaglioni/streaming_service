@@ -5,7 +5,6 @@ pub mod streaming_event;
 pub mod streaming_events_client;
 pub mod streaming_events_server;
 
-use crate::network::iroh::IrohStream;
 use crate::network::streaming_event::Transport;
 use crate::video::gs::{build_client_iroh_pipeline, build_client_udp_pipeline};
 use gstreamer::Pipeline;
@@ -101,7 +100,7 @@ pub enum ConnectionMode {
     Iroh {
         connection: Option<Connection>,
         streaming_events_stream: Option<Transport<RecvStream, SendStream>>,
-        frames_stream: Option<IrohStream>,
+        frames_stream: Option<Transport<RecvStream, SendStream>>,
         ticket: EndpointTicket,
     },
 }

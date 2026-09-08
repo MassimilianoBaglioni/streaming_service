@@ -1,10 +1,8 @@
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
-use crate::network::streaming_event::{StreamingEvent, Transport};
+use crate::network::streaming_event::Transport;
 use anyhow::{anyhow, Result};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{endpoint::presets, Endpoint};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
 
 const FRAMES_TAG: u8 = 0;
@@ -45,7 +43,7 @@ pub async fn establish_iroh_server_connection(endpoint: Endpoint) -> Result<Serv
 
     Ok(ServerConnection {
         connection_mode: ServerConnectionMode::Iroh {
-            frames_stream: IrohStream::new(send_frames_stream, recv_frames_stream),
+            frames_stream: Transport::new(recv_frames_stream, send_frames_stream),
             iroh_connection,
             events_connection,
         },
@@ -58,27 +56,4 @@ async fn open_tagged_bi(conn: &Connection, tag: u8) -> Result<(SendStream, RecvS
     let (mut send, recv) = conn.open_bi().await?;
     send.write_all(&[tag]).await?;
     Ok((send, recv))
-}
-
-#[derive(Debug)]
-pub struct IrohStream {
-    pub send_stream: Arc<Mutex<SendStream>>,
-    pub recv_stream: Arc<Mutex<RecvStream>>,
-}
-
-impl IrohStream {
-    pub fn new(send_stream: SendStream, recv_stream: RecvStream) -> Self {
-        Self {
-            send_stream: Arc::new(Mutex::new(send_stream)),
-            recv_stream: Arc::new(Mutex::new(recv_stream)),
-        }
-    }
-
-    pub async fn get_send_lock(&self) -> tokio::sync::MutexGuard<'_, SendStream> {
-        self.send_stream.lock().await
-    }
-
-    pub async fn get_recv_lock(&self) -> tokio::sync::MutexGuard<'_, RecvStream> {
-        self.recv_stream.lock().await
-    }
 }

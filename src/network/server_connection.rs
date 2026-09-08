@@ -1,4 +1,3 @@
-use crate::network::iroh::IrohStream;
 use crate::network::streaming_event::{StreamingEvent, Transport};
 use crate::network::streaming_events_server::StreamingEventsSocketServer;
 use crate::network::ConnectionBuildInfo;
@@ -17,7 +16,7 @@ pub enum ServerConnectionMode {
         events_connection: Option<Transport<OwnedReadHalf, OwnedWriteHalf>>,
     },
     Iroh {
-        frames_stream: IrohStream,
+        frames_stream: Transport<RecvStream, SendStream>,
         iroh_connection: Connection,
         events_connection: Option<Transport<RecvStream, SendStream>>,
     },
@@ -90,7 +89,7 @@ impl ServerConnection {
                 events_connection
                     .as_mut()
                     .unwrap()
-                    .send(&streaming_event)
+                    .send_serializable(&streaming_event)
                     .await
                     .expect("Failed to send event");
             }
@@ -100,7 +99,7 @@ impl ServerConnection {
                 events_connection
                     .as_mut()
                     .unwrap()
-                    .send(&streaming_event)
+                    .send_serializable(&streaming_event)
                     .await
                     .expect("Failed to send event");
             }
@@ -153,15 +152,17 @@ impl ServerConnection {
                 break;
             };
 
-            let mut send_ref = frames_stream.get_send_lock().await;
-            if let Err(e) = ServerConnection::send_frame(&mut send_ref, &frame).await {
+            if let Err(e) = ServerConnection::send_frame(frames_stream, &frame).await {
                 error!("Failed to send frame: {e}");
                 break;
             }
         }
     }
 
-    async fn send_frame(send: &mut SendStream, frame: &Sample) -> anyhow::Result<()> {
+    async fn send_frame(
+        send: &mut Transport<RecvStream, SendStream>,
+        frame: &Sample,
+    ) -> anyhow::Result<()> {
         let buffer = frame.buffer().context("Sample has no buffer")?;
         let map = buffer
             .map_readable()
@@ -169,8 +170,8 @@ impl ServerConnection {
         let payload = map.as_slice();
 
         let len = payload.len() as u32;
-        send.write_all(&len.to_be_bytes()).await?;
-        send.write_all(payload).await?;
+        send.send(&len.to_be_bytes()).await?;
+        send.send(payload).await?;
 
         Ok(())
     }
