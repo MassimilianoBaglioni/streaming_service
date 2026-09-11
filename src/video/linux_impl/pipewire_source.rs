@@ -16,8 +16,8 @@ use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 
 use crate::network::NetInfo;
-use crate::network::streaming_event::StreamingEvent;
 use crate::network::streaming_events_server::StreamingEventSocketServer;
+use crate::network::transport::StreamingEvent;
 use crate::video::gs;
 use crate::video::linux_impl::wayland::wayland_handles::WaylandHandles;
 use crate::video::video_source::VideoSourceKind;

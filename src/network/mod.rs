@@ -1,11 +1,9 @@
 pub mod client_connection;
 pub mod iroh;
 pub mod server_connection;
-pub mod streaming_event;
-pub mod streaming_events_client;
-pub mod streaming_events_server;
+pub mod transport;
 
-use crate::network::streaming_event::Transport;
+use crate::network::transport::FrameTransport;
 use crate::video::gs::{build_client_iroh_pipeline, build_client_udp_pipeline};
 use gstreamer::Pipeline;
 use ::iroh::endpoint::{Connection, RecvStream, SendStream};
@@ -14,8 +12,6 @@ use iroh_tickets::endpoint::EndpointTicket;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{net::AddrParseError, num::ParseIntError};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::Mutex;
 use tracing::warn;
 
 #[derive(Debug)]
@@ -46,8 +42,8 @@ pub enum ConnectionBuildInfo {
         endpoint: Endpoint,
         ticket: EndpointTicket,
         connection: Option<Connection>,
-        send: Option<Arc<Mutex<SendStream>>>,
-        recv: Option<Arc<Mutex<RecvStream>>>,
+        send: Option<Arc<SendStream>>,
+        recv: Option<Arc<RecvStream>>,
     },
 }
 
@@ -95,12 +91,10 @@ pub enum ConnectionMode {
     Direct {
         socket_addr: SocketAddr,
         watcher_stream_port: u16,
-        streaming_events_stream: Option<Arc<Mutex<Transport<OwnedReadHalf, OwnedWriteHalf>>>>,
     },
     Iroh {
         connection: Option<Connection>,
-        streaming_events_stream: Option<Transport<RecvStream, SendStream>>,
-        frames_stream: Option<Transport<RecvStream, SendStream>>,
+        frames_stream: Option<FrameTransport>,
         ticket: EndpointTicket,
     },
 }

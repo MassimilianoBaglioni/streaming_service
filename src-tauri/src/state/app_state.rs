@@ -1,7 +1,7 @@
 use iroh::Endpoint;
 use std::sync::Arc;
 use streaming_server::network::server_connection::ServerConnection;
-use streaming_server::network::streaming_event::StreamingEvent;
+use streaming_server::network::transport::StreamingEvent;
 use streaming_server::network::ConnectionMode;
 use streaming_server::video::video_source::VideoSourceKind;
 use tokio::sync::mpsc::Sender;
