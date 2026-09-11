@@ -1,7 +1,7 @@
 use crate::state::app_state::AppState;
 use iroh_tickets::endpoint::EndpointTicket;
 use streaming_server::network::client_connection::ClientConnection;
-use streaming_server::network::streaming_event::StreamingEvent;
+use streaming_server::network::transport::StreamingEvent;
 use streaming_server::network::ConnectionBuildInfo;
 #[cfg(target_os = "windows")]
 use streaming_server::video::windows_impl::client::windows_client::WindowsClient;
@@ -29,7 +29,7 @@ pub async fn start_watching_direct(
     let mut streaming_session = state.streaming_session.lock().await;
     streaming_session.stop_watching_sender = Some(sender.clone());
 
-    let client_connection = ClientConnection::new(connection_build_info, Some(receiver));
+    let client_connection = ClientConnection::new(connection_build_info, Some(receiver)).await;
 
     start_watching(app, client_connection).await
 }
@@ -74,6 +74,7 @@ async fn start_watching(app: AppHandle, client_connection: ClientConnection) -> 
                 Err(e) => {
                     if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
                         if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
+                            info!("Connection refused {:?}", e);
                             app.emit("server-not-streaming", ()).unwrap();
                         } else {
                             error!("Client error: {:?}", e);

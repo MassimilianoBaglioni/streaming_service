@@ -1,5 +1,5 @@
 use crate::network::server_connection::{ServerConnection, ServerConnectionMode};
-use crate::network::streaming_event::Transport;
+use crate::network::transport::{TaskTransport};
 use anyhow::{anyhow, Result};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::{endpoint::presets, Endpoint};
@@ -39,14 +39,27 @@ pub async fn establish_iroh_server_connection(endpoint: Endpoint) -> Result<Serv
 
     info!("Opened bi connection on the server");
 
-    let events_connection = Some(Transport::new(recv_events_stream, send_events_stream));
+    let events_transport = Some(TaskTransport::new(
+        send_events_stream,
+        recv_events_stream,
+        32,
+        1024,
+    ));
+
+    let events_sender = Some(events_transport.as_ref().unwrap().serialized_sender());
 
     Ok(ServerConnection {
         connection_mode: ServerConnectionMode::Iroh {
-            frames_stream: Transport::new(recv_frames_stream, send_frames_stream),
+            frames_stream: Some(TaskTransport::new(
+                send_frames_stream,
+                recv_frames_stream,
+                8,
+                65536,
+            )),
             iroh_connection,
-            events_connection,
         },
+        events_transport,
+        events_sender,
     })
 }
 
