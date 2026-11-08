@@ -1,12 +1,17 @@
-use crate::state::app_state::AppState;
+use crate::commands::errors::CommandError;
+use crate::state::app_state::{AppState, Session, SessionError};
+use crate::state::client_state::ClientState;
 use iroh_tickets::endpoint::EndpointTicket;
-use streaming_server::network::client_connection::ClientConnection;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::str::FromStr;
+use std::sync::Arc;
+use streaming_server::client::client_session::ClientSession;
+use streaming_server::client::network::direct::request::DirectNetworkRequest;
 use streaming_server::network::transport::StreamingEvent;
-use streaming_server::network::ConnectionBuildInfo;
-#[cfg(target_os = "windows")]
-use streaming_server::video::windows_impl::client::windows_client::WindowsClient;
+use streaming_server::network::ConnectionBuildError;
+use streaming_server::platform::decode_backend::DecodeBackend;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info};
 
 #[tauri::command]
@@ -16,96 +21,129 @@ pub async fn start_watching_direct(
     stream_port: String,
     tcp_port: String,
     streamer_ip: String,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     info!(
         "Starting watch direct with stream_port: {}, tcp_port: {}, streamer_ip: {}",
         stream_port, tcp_port, streamer_ip
     );
-    let connection_build_info = ConnectionBuildInfo::from_direct_info(stream_port, streamer_ip)
-        .expect("Failed to build connection info");
 
-    let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
-
-    let mut streaming_session = state.streaming_session.lock().await;
-    streaming_session.stop_watching_sender = Some(sender.clone());
-
-    let client_connection = ClientConnection::new(connection_build_info, Some(receiver)).await;
-
-    start_watching(app, client_connection).await
-}
-#[tauri::command]
-pub async fn start_watching_iroh(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    ticket: Option<String>,
-) -> Result<(), String> {
-    let ticket: EndpointTicket = ticket
-        .expect("No ticket received from frontend")
+    let port: u16 = stream_port
         .parse()
-        .expect("Failed to parse ticket");
+        .map_err(|e| ConnectionBuildError::InvalidPort(e))?;
+    let ip: Ipv4Addr = streamer_ip
+        .parse()
+        .map_err(|e| ConnectionBuildError::InvalidIp(e))?;
+    let address: SocketAddr = format!("{ip}:{port}")
+        .parse()
+        .map_err(|e| ConnectionBuildError::InvalidIp(e))?;
 
-    let (sender, receiver) = mpsc::channel::<StreamingEvent>(16);
+    let direct_request = DirectNetworkRequest { address };
 
-    let mut streaming_session = state.streaming_session.lock().await;
-    streaming_session.stop_watching_sender = Some(sender.clone());
+    let (frontend_sender, frontend_receiver) = mpsc::channel::<StreamingEvent>(16);
 
-    let endpoint = state
-        .get_or_create_iroh_endpoint()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let client_connection =
-        ClientConnection::new_from_ticket_and_recv(ticket, receiver, &endpoint).await;
-
-    start_watching(app, client_connection).await
-}
-
-async fn start_watching(app: AppHandle, client_connection: ClientConnection) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let mut client = WindowsClient::from(client_connection);
-
-    #[cfg(target_os = "linux")]
-    let client = PipewireClient::new(net_info);
-
-    tokio::spawn(async move {
-        {
-            match client.receive().await {
-                Ok(_) => {}
-                Err(e) => {
-                    if let Some(io_err) = e.downcast_ref::<std::io::Error>() {
-                        if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
-                            info!("Connection refused {:?}", e);
-                            app.emit("server-not-streaming", ()).unwrap();
-                        } else {
-                            error!("Client error: {:?}", e);
-                            app.emit("streaming-stopped", ()).unwrap();
-                        }
-                    } else {
-                        error!("Client error: {:?}", e);
-                        app.emit("streaming-stopped", ()).unwrap();
-                    }
-                }
-            };
-            app.emit("streaming-stopped", ()).unwrap();
+    let session = match ClientSession::accept_direct(
+        DecodeBackend::WindowsD3D11,
+        direct_request,
+        frontend_receiver,
+    )
+    .await
+    {
+        Ok(session) => session,
+        Err(e) => {
+            info!("Direct connection refused {:?}", e);
+            let _ = app.emit("server-not-streaming", ());
+            return Err(CommandError::from(e));
         }
-    });
+    };
 
+    {
+        state
+            .set_session(Session::Client(ClientState::Watching(session)))
+            .await;
+    }
+    start_watching(
+        app,
+        state.streaming_session.clone(),
+        frontend_sender.clone(),
+    )
+    .await?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_watching(state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(sender) = state
-        .streaming_session
-        .lock()
-        .await
-        .stop_watching_sender
-        .as_ref()
+pub async fn start_watching_iroh(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ticket: String,
+) -> Result<(), CommandError> {
+    let ticket = EndpointTicket::from_str(&ticket).map_err(|e| {
+        error!("Failed to parse ticket: {e}");
+        CommandError::ConnectionBuildError(ConnectionBuildError::InvalidTicket(e.to_string()))
+    })?;
+
+    let (frontend_sender, frontend_receiver) = mpsc::channel::<StreamingEvent>(16);
+
+    let endpoint = state.get_or_create_iroh_endpoint().await?;
+
+    // TODO this assumes windows, should be created based on the info given at compile time
+    let session = match ClientSession::accept_iroh(
+        endpoint,
+        ticket,
+        DecodeBackend::WindowsD3D11,
+        frontend_receiver,
+    )
+    .await
     {
-        sender
-            .send(StreamingEvent::ClientQuit)
-            .await
-            .expect("Failed to send client stop event");
+        Ok(session) => session,
+        Err(e) => {
+            info!("Iroh connection refused {:?}", e);
+            let _ = app.emit("server-not-streaming", ());
+            return Err(CommandError::from(e));
+        }
+    };
+
+    *state.streaming_session.lock().await = Some(Session::Client(ClientState::Watching(session)));
+    start_watching(
+        app,
+        state.streaming_session.clone(),
+        frontend_sender.clone(),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn start_watching(
+    app: AppHandle,
+    streaming_session: Arc<Mutex<Option<Session>>>,
+    frontend_sender: mpsc::Sender<StreamingEvent>,
+) -> Result<(), CommandError> {
+    let mut guard = streaming_session.lock().await;
+
+    match guard.as_mut().ok_or(SessionError::NoSession)? {
+        Session::Client(ClientState::Watching(session)) => {
+            let session_clone = streaming_session.clone();
+            session
+                .start_watching(move |result| {
+                    let _frontend_sender = frontend_sender;
+                    if let Err(e) = result {
+                        error!("Client error: {:?}", e);
+                    }
+                    tokio::spawn(async move {
+                        let _ = session_clone.lock().await.take();
+                    });
+                    let _ = app.emit("streaming-stopped", ());
+                })
+                .await?;
+            Ok(())
+        }
+        _ => Err(SessionError::NoSession.into()),
+    }
+}
+
+#[tauri::command]
+pub async fn stop_watching(state: State<'_, AppState>) -> Result<(), CommandError> {
+    if let Some(mut session) = state.streaming_session.lock().await.take() {
+        session.stop_watching().await?;
     }
     info!("Called stop watching");
     Ok(())

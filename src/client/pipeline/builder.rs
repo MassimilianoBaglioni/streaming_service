@@ -1,6 +1,6 @@
+use crate::client::network::connection_config::ConnectionConfig;
+use crate::client::pipeline::windows::{windows_direct, windows_iroh};
 use crate::error::PipelineError;
-use crate::new_client::network::connection_config::ConnectionConfig;
-use crate::new_client::pipeline::windows::{windows_direct, windows_iroh};
 use crate::platform::decode_backend::DecodeBackend;
 use gstreamer::Pipeline;
 
@@ -22,7 +22,7 @@ impl Builder {
         match (&self.decoder, connection_config) {
             (DecodeBackend::WindowsD3D11, ConnectionConfig::Iroh) => windows_iroh(),
             (DecodeBackend::WindowsD3D11, ConnectionConfig::Direct(cfg)) => {
-                windows_direct(cfg.port)
+                windows_direct(cfg.address.port())
             }
         }
     }

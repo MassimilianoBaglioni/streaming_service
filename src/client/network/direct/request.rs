@@ -1,3 +1,6 @@
-pub struct DirectConnectionRequest {
-    pub port: u16
+use std::net::SocketAddr;
+
+pub struct DirectNetworkRequest {
+    pub address: SocketAddr,
 }
+

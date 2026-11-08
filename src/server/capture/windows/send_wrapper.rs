@@ -5,7 +5,7 @@ impl<T> SendWrapper<T> {
     pub(crate) fn new(val: T) -> Self {
         Self(val)
     }
-    fn get(&self) -> &T {
+    pub(crate) fn get(&self) -> &T {
         &self.0
     }
 }

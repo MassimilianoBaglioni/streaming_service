@@ -1,4 +1,4 @@
-use crate::network::transport::{ClientCommunicationChannel, RawSender};
+use crate::network::transport::{PeerCommunicationChannel, RawSender};
 use anyhow::Context;
 use bytes::BytesMut;
 use gstreamer::Sample;
@@ -11,11 +11,23 @@ use tracing::{error, info, warn};
 pub struct IrohProtocol {
     app_sink: AppSink,
     cancellation_token: CancellationToken,
-    frames_stream: ClientCommunicationChannel,
+    frames_stream: PeerCommunicationChannel,
     iroh_connection: Connection,
 }
 
 impl IrohProtocol {
+    pub fn new(
+        app_sink: AppSink,
+        frames_stream: PeerCommunicationChannel,
+        iroh_connection: Connection,
+    ) -> Self {
+        Self {
+            app_sink,
+            cancellation_token: CancellationToken::new(),
+            frames_stream,
+            iroh_connection,
+        }
+    }
     pub fn start_streaming(&self) {
         let (sender, receiver) = channel::<Sample>(32);
 
@@ -55,6 +67,15 @@ impl IrohProtocol {
                 } => {}
             }
         });
+
+        let cancel_for_client_events = self.cancellation_token.clone();
+    }
+
+    pub async fn stop_streaming(mut self) {
+        info!("Iroh protocol stopped streaming called");
+        self.cancellation_token.cancel();
+        self.frames_stream.close().await;
+        self.iroh_connection.close(0u8.into(), b"session closed");
     }
 }
 async fn send_frame(send: &RawSender, frame: &Sample) -> anyhow::Result<()> {
@@ -81,7 +102,7 @@ async fn send_frames_iroh(frames_sender: RawSender, mut recv: Receiver<Sample>) 
         };
 
         if let Err(e) = send_frame(&frames_sender, &frame).await {
-            error!("Failed to send frame: {e}");
+            error!("Failed to send frame: {e:#}");
             break;
         }
     }

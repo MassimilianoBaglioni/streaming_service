@@ -1,6 +1,6 @@
-use crate::new_client::network::direct::request::DirectConnectionRequest;
+use crate::client::network::direct::request::DirectNetworkRequest;
 
 pub enum ConnectionConfig {
     Iroh,
-    Direct(DirectConnectionRequest),
+    Direct(DirectNetworkRequest),
 }

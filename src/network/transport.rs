@@ -21,19 +21,20 @@ pub enum StreamingEvent {
 pub enum TransmissionError {
     #[error("Transmission network error: {0}")]
     Io(#[from] std::io::Error),
-
     #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
-
     #[error("Recv error: {0}")]
     Recv(#[from] RecvError),
-
     #[error("Connection closed")]
     Closed,
+    #[error("No frames connection found ")]
+    NoFramesConnection,
+    #[error("No events connection found")]
+    NoEventsConnection,
 }
 
 #[derive(Debug)]
-pub struct TaskTransport {
+pub struct PeerCommunicationChannel {
     send_handle: JoinHandle<()>,
     recv_handle: JoinHandle<()>,
     listen_channel: broadcast::Sender<Bytes>,
@@ -41,7 +42,7 @@ pub struct TaskTransport {
     shutdown: CancellationToken,
 }
 
-impl TaskTransport {
+impl PeerCommunicationChannel {
     pub fn new<R, W>(send: W, recv: R, channel_capacity: usize, recv_buffer_capacity: usize) -> Self
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -59,9 +60,13 @@ impl TaskTransport {
 
             loop {
                 let mut len_buf = [0u8; 4];
-                if recv.read_exact(&mut len_buf).await.is_err() {
-                    break;
+                tokio::select! {
+                    _ = recv_cancellation.cancelled() => break,
+                    res = recv.read_exact(&mut len_buf) => {
+                        if res.is_err() { break; }
+                    }
                 }
+
                 let len = u32::from_be_bytes(len_buf) as usize;
 
                 if buf.capacity() < len {
@@ -70,14 +75,14 @@ impl TaskTransport {
                 buf.resize(len, 0);
 
                 tokio::select! {
-                    _ = recv_cancellation.cancelled() => {break},
+                    _ = recv_cancellation.cancelled() => break,
                     res = recv.read_exact(&mut buf[..len]) => {
                         if res.is_err() { break; }
                     }
                 }
 
+                // 4. Hand the frame to subscribers
                 let frame = buf.split_to(len).freeze();
-
                 let _ = communicate_received_channel.send(frame);
             }
         });
@@ -89,7 +94,15 @@ impl TaskTransport {
             let mut send = send;
             loop {
                 tokio::select! {
-                    _ = send_cancellation.cancelled() => break,
+                    _ = send_cancellation.cancelled() => {
+                        // flush anything already queued (e.g. ServerEndsStream)
+                        while let Ok(payload) = get_data_channel.try_recv() {
+                            let len = (payload.len() as u32).to_be_bytes();
+                            if send.write_all(&len).await.is_err() { break; }
+                            if send.write_all(&payload).await.is_err() { break; }
+                        }
+                        break;
+                    }
                     maybe_payload = get_data_channel.recv() => {
                         match maybe_payload {
                             Some(payload) => {
@@ -102,7 +115,7 @@ impl TaskTransport {
                     }
                 }
             }
-            let _ = send.shutdown().await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), send.shutdown()).await;
         });
 
         Self {
@@ -114,11 +127,12 @@ impl TaskTransport {
         }
     }
 
-    pub async fn close(self) {
+    pub async fn close(&mut self) {
         self.shutdown.cancel();
-        let _ = self.send_handle.await;
-        let _ = self.recv_handle.await;
+        self.send_handle.abort();
+        self.recv_handle.abort();
     }
+
     pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
         self.listen_channel.subscribe()
     }
@@ -151,6 +165,12 @@ impl TaskTransport {
             rx: self.listen_channel.subscribe(),
             _marker: PhantomData,
         }
+    }
+}
+
+impl Drop for PeerCommunicationChannel {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
     }
 }
 
@@ -207,7 +227,7 @@ impl<T: DeserializeOwned> SerializedReceiver<T> {
     }
 }
 
-/// Initially TaskTransport was designed to handle frames as well. But using broadcast, which is a requirement for events, made it impossible.
+/// Initially ClientCommunicationChannel was designed to handle frames as well. But using broadcast, which is a requirement for events, made it impossible.
 /// Frames arrive too fast if there's no backpressure handling client's receiver is not fast enough, which makes broadcast drop frames.
 /// So we need separate transport for frames, which uses mpsc instead of broadcast.
 #[derive(Debug)]
@@ -326,4 +346,14 @@ impl Drop for FrameTransport {
     fn drop(&mut self) {
         self.shutdown.cancel();
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ServerTransportError {
+    #[error("failed to bind socket: {0}")]
+    SocketBind(std::io::Error),
+    #[error("failed to accept connection: {0}")]
+    SocketAccept(std::io::Error),
+    #[error("wrong protocol")]
+    WrongProtocol,
 }

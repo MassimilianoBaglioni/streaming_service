@@ -23,4 +23,10 @@ impl CaptureSource {
             CaptureSource::Windows(windows_source) => windows_source.start_streaming(),
         }
     }
+
+    pub fn stop(&mut self) {
+        match self {
+            CaptureSource::Windows(windows_source) => windows_source.stop(),
+        }
+    }
 }

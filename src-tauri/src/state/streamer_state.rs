@@ -1,3 +1,4 @@
+use streaming_server::error::IrohProtocolError;
 use streaming_server::network::iroh::IrohNetworkInfo;
 use streaming_server::server::server_session::ServerSession;
 use thiserror::Error;
@@ -15,12 +16,15 @@ pub enum StreamingStateError {
     NoAcceptHandle,
     #[error("Stream state is not in ready state")]
     NotReady,
+    #[error("Wrong streamer state")]
+    WrongStreamerState,
 }
 
 #[derive(Default)]
 pub struct IrohBuilder {
     pub iroh_network_info: Option<IrohNetworkInfo>,
-    pub accept_client_handle: Option<JoinHandle<anyhow::Result<(), StreamingStateError>>>,
+    pub accept_client_handle:
+        Option<JoinHandle<anyhow::Result<IrohNetworkInfo, IrohProtocolError>>>,
 }
 
 impl IrohBuilder {
@@ -30,7 +34,7 @@ impl IrohBuilder {
 
     pub fn set_accept_client_handle(
         &mut self,
-        accept_handle: JoinHandle<anyhow::Result<(), StreamingStateError>>,
+        accept_handle: JoinHandle<anyhow::Result<IrohNetworkInfo, IrohProtocolError>>,
     ) {
         self.accept_client_handle = Some(accept_handle);
     }
@@ -43,21 +47,10 @@ pub enum ProtocolBuilder {
 impl ProtocolBuilder {
     pub fn set_iroh_accept_handle(
         &mut self,
-        handle: JoinHandle<Result<(), StreamingStateError>>,
+        handle: JoinHandle<Result<IrohNetworkInfo, IrohProtocolError>>,
     ) -> Result<(), StreamingStateError> {
         match self {
             ProtocolBuilder::Iroh(builder) => Ok(builder.set_accept_client_handle(handle)),
-            _ => Err(StreamingStateError::WrongProtocol),
-        }
-    }
-
-    pub fn take_iroh_accept_handle(
-        &mut self,
-    ) -> Result<JoinHandle<Result<(), StreamingStateError>>, StreamingStateError> {
-        match self {
-            ProtocolBuilder::Iroh(builder) => Ok(*builder
-                .accept_client_handle
-                .ok_or(StreamingStateError::NoAcceptHandle)),
             _ => Err(StreamingStateError::WrongProtocol),
         }
     }
@@ -101,35 +94,38 @@ impl StreamerState {
 
     pub fn set_iroh_accept_handle(
         &mut self,
-        handle: JoinHandle<Result<(), StreamingStateError>>,
+        handle: JoinHandle<Result<IrohNetworkInfo, IrohProtocolError>>,
     ) -> Result<(), StreamingStateError> {
         match self {
             StreamerState::Waiting(builder) => builder.set_iroh_accept_handle(handle),
-            _ => Err(StreamingStateError::NotWaiting),
-        }
-    }
-
-    pub fn take_iroh_accept_handle(
-        &mut self,
-    ) -> Result<JoinHandle<Result<(), StreamingStateError>>, StreamingStateError> {
-        match self {
-            StreamerState::Waiting(builder) => builder.take_iroh_accept_handle(),
-            _ => Err(StreamingStateError::NotWaiting),
+            StreamerState::Empty => {
+                let mut iroh_builder = IrohBuilder::default();
+                iroh_builder.set_accept_client_handle(handle);
+                *self = StreamerState::Waiting(ProtocolBuilder::Iroh(iroh_builder));
+                Ok(())
+            }
+            _ => Err(StreamingStateError::WrongStreamerState),
         }
     }
 
     // Takes ownership. It is meant to build the stream state once
-    pub fn take_iroh_builder(&self) -> Result<IrohBuilder, StreamingStateError> {
+    pub fn take_iroh_builder(self) -> Result<IrohBuilder, StreamingStateError> {
         match self {
-            StreamerState::Waiting(ProtocolBuilder::Iroh(builder)) => Ok(*builder),
+            StreamerState::Waiting(ProtocolBuilder::Iroh(builder)) => Ok(builder),
             _ => Err(StreamingStateError::NotWaiting),
         }
     }
 
-    pub fn stop_streaming(&mut self) -> Result<(), StreamingStateError> {
-        match self {
-            StreamerState::Ready(server_session) => server_session.stop_streaming(),
-            _ => return Err(StreamingStateError::NotReady),
+    pub async fn stop_streaming(&mut self) -> Result<(), StreamingStateError> {
+        match std::mem::replace(self, StreamerState::Empty) {
+            StreamerState::Ready(server_session) => {
+                server_session.stop_streaming().await;
+                Ok(())
+            }
+            other => {
+                *self = other;
+                Err(StreamingStateError::NotReady)
+            }
         }
     }
 }

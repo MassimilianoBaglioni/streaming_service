@@ -1,4 +1,4 @@
-use crate::new_client::pipeline::builder::APPSRC_NAME;
+use crate::client::pipeline::builder::APPSRC_NAME;
 use gstreamer as gst;
 
 use crate::error::PipelineError;

@@ -315,9 +315,9 @@
 
     <div class="btn-row">
       <button class="btn btn-primary" [disabled]="!canStartWatch" (click)="startWatching()">
-        {{ isWatching ? 'Watching...' : 'Start Watching' }}
+        {{ isConnectingWatch ? 'Connecting...' : isWatching ? 'Watching...' : 'Start Watching' }}
       </button>
-      <button class="btn btn-stop" [disabled]="!isWatching" (click)="stopWatching()">
+      <button class="btn btn-stop" [disabled]="!isWatching && !isConnectingWatch" (click)="stopWatching()">
         Stop Watching
       </button>
     </div>

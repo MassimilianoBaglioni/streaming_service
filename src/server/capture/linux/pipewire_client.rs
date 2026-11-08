@@ -1,7 +1,7 @@
-use crate::network::NetInfo;
 use crate::network::streaming_events_client::StreamingEventSocketClient;
+use crate::network::NetInfo;
 use gstreamer::prelude::*;
-use gstreamer::{self as gst};
+use gstreamer::self as gst;
 use tracing::{error, info, warn};
 
 pub struct PipewireClient {

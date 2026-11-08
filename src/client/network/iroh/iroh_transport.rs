@@ -1,4 +1,4 @@
-use crate::error::PipelineError;
+use crate::error::{IrohProtocolError, IrohStateError};
 use crate::network::iroh::ALPN;
 use crate::network::transport::{FrameTransport, PeerCommunicationChannel, TransmissionError};
 use crate::network::{EVENTS_TAG, FRAMES_TAG};
@@ -16,17 +16,6 @@ use tracing::{error, info, warn};
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Error)]
-pub enum IrohProtocolError {
-    #[error(transparent)]
-    FrameReceive(#[from] FrameReceiveError),
-    #[error(transparent)]
-    TransmissionError(#[from] TransmissionError),
-    #[error(transparent)]
-    IrohStateError(#[from] IrohStateError),
-    #[error("Could not create pipeline: {0}")]
-    PipelineError(#[from] PipelineError),
-}
-#[derive(Debug, Error)]
 pub enum FrameReceiveError {
     #[error("iroh read error: {0}")]
     Read(#[from] iroh::endpoint::ReadError),
@@ -42,12 +31,6 @@ pub enum FrameReceiveError {
     NoConnection,
 }
 
-#[derive(Debug, Error)]
-pub enum IrohStateError {
-    #[error("Already receiving")]
-    AlreadyReceiving,
-}
-
 pub enum IrohProtocol {
     Connected(ConnectedState),
     Receiving(ReceivingState),
@@ -60,10 +43,12 @@ impl IrohProtocol {
     ) -> Result<(Self, PeerCommunicationChannel), IrohProtocolError> {
         endpoint.online().await;
         info!("Client connecting to Node ID: {:?}", ticket.endpoint_addr());
-        let connection = endpoint
-            .connect(ticket.endpoint_addr().clone(), ALPN)
-            .await
-            .expect("Failed to connect to the endpoint");
+        let connection = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            endpoint.connect(ticket.endpoint_addr().clone(), ALPN),
+        )
+        .await
+        .map_err(|_| IrohProtocolError::StreamAcceptError("Connection timed out".into()))??;
         info!("Iroh connected");
 
         let mut frames_stream = None;
@@ -71,9 +56,7 @@ impl IrohProtocol {
 
         // Accepts TWO connections, one for the frames and the other for streaming events
         for _ in 0..2 {
-            let (tag, send, recv) = IrohProtocol::accept_tagged_bi(&connection)
-                .await
-                .expect("Failed to accept connection");
+            let (tag, send, recv) = IrohProtocol::accept_tagged_bi(&connection).await?;
             match tag {
                 FRAMES_TAG => {
                     frames_stream = Some(FrameTransport::new(send, recv, 32, 65536));
@@ -99,10 +82,22 @@ impl IrohProtocol {
         ))
     }
 
-    async fn accept_tagged_bi(conn: &Connection) -> anyhow::Result<(u8, SendStream, RecvStream)> {
-        let (send, mut recv) = conn.accept_bi().await?;
+    async fn accept_tagged_bi(
+        conn: &Connection,
+    ) -> Result<(u8, SendStream, RecvStream), IrohProtocolError> {
+        let (send, mut recv) =
+            tokio::time::timeout(std::time::Duration::from_secs(10), conn.accept_bi())
+                .await
+                .map_err(|_| {
+                    IrohProtocolError::StreamAcceptError(
+                        "Timed out waiting for server to open streams".into(),
+                    )
+                })?
+                .map_err(IrohProtocolError::OpenBiFailed)?;
         let mut tag = [0u8; 1];
-        recv.read_exact(&mut tag).await?;
+        recv.read_exact(&mut tag)
+            .await
+            .map_err(|e| IrohProtocolError::StreamAcceptError(e.to_string()))?;
         Ok((tag[0], send, recv))
     }
 
@@ -110,10 +105,10 @@ impl IrohProtocol {
         &mut self,
         app_src: AppSrc,
         cancellation_token: CancellationToken,
-    ) -> Result<Self, IrohProtocolError> {
-        let state = match self {
-            IrohProtocol::Connected(connected_state) => connected_state,
-            IrohProtocol::Receiving(_) => Err(IrohStateError::AlreadyReceiving)?,
+    ) -> Result<(), IrohProtocolError> {
+        // Borrow only to take the receiver; the borrow ends before the replace below.
+        let IrohProtocol::Connected(state) = self else {
+            return Err(IrohStateError::AlreadyReceiving.into());
         };
 
         let mut frames_receiver = state
@@ -135,9 +130,60 @@ impl IrohProtocol {
             }
         });
 
-        Ok(Self::Receiving(ReceivingState {
-            receive_frames_handle,
-        }))
+        // Now take ownership of the old state (a by-value match, so fields are owned).
+        let old = std::mem::replace(
+            self,
+            IrohProtocol::Receiving(ReceivingState {
+                frames_stream: None,
+                connection: None,
+                receive_frames_handle: None,
+            }),
+        );
+
+        let IrohProtocol::Connected(ConnectedState {
+            frames_stream,
+            connection,
+        }) = old
+        else {
+            unreachable!("state was Connected above");
+        };
+
+        *self = IrohProtocol::Receiving(ReceivingState {
+            frames_stream: Some(frames_stream),
+            connection: Some(connection),
+            receive_frames_handle: Some(receive_frames_handle),
+        });
+
+        Ok(())
+    }
+
+    pub async fn stop(&mut self) {
+        match self {
+            IrohProtocol::Connected(ConnectedState {
+                frames_stream,
+                connection,
+            }) => {
+                frames_stream.close().await;
+                connection.close(0u8.into(), b"client quit");
+            }
+            IrohProtocol::Receiving(ReceivingState {
+                frames_stream,
+                connection,
+                receive_frames_handle,
+            }) => {
+                if let Some(h) = receive_frames_handle.take() {
+                    h.abort();
+                    let _ = h.await;
+                }
+                if let Some(mut fs) = frames_stream.take() {
+                    fs.close().await;
+                }
+                if let Some(conn) = connection.take() {
+                    conn.close(0u8.into(), b"client quit");
+                }
+            }
+        }
+        info!("IrohProtocol on client stopped cleanly");
     }
 
     async fn receive_frames(
@@ -149,10 +195,8 @@ impl IrohProtocol {
             let payload = match recv.recv().await {
                 Some(bytes) => bytes,
                 None => {
-                    error!("Receiver channel closed unexpectedly");
-                    return Err(FrameReceiveError::Buffer(
-                        "Frames channel returned None".into(),
-                    ));
+                    info!("Frames channel closed, stopping frame receiver");
+                    return Ok(());
                 }
             };
 
@@ -167,15 +211,21 @@ impl IrohProtocol {
                     .map_err(|_| FrameReceiveError::Buffer("map_writable failed".into()))?;
                 map.as_mut_slice().copy_from_slice(&payload);
             }
-            appsrc.push_buffer(gst_buffer)?;
+            if let Err(e) = appsrc.push_buffer(gst_buffer) {
+                info!("appsrc push_buffer stopped ({e})");
+                return Ok(());
+            }
         }
     }
 }
+
 pub struct ConnectedState {
     frames_stream: FrameTransport,
     connection: Connection,
 }
 
 pub struct ReceivingState {
-    receive_frames_handle: JoinHandle<()>,
+    frames_stream: Option<FrameTransport>,
+    connection: Option<Connection>,
+    receive_frames_handle: Option<JoinHandle<()>>,
 }
