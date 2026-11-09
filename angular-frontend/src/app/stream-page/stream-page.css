@@ -163,13 +163,23 @@
   font-weight: 500;
   line-height: 1.3;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.15s ease-in-out;
+  user-select: none;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 0.9;
 }
 
 .btn-primary {
   background: var(--acc);
   color: white;
   border-color: var(--acc);
+}
+
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.95;
 }
 
 .btn-danger {

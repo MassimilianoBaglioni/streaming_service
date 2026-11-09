@@ -19,6 +19,7 @@ export class StreamPage {
   isStreaming = false;
   isWatching = false;
   isWaitingForWatcher = false;
+  isConnectingWatch = false;
   streamForm = new FormGroup({
     watcherAddress: new FormControl('127.0.0.1', [Validators.required]),
     tcpPort: new FormControl('8010', [Validators.required, Validators.pattern(/^\d{1,5}$/)]),
@@ -56,7 +57,7 @@ export class StreamPage {
   }
 
   get canStartWatch(): boolean {
-    if (this.isWatching) {
+    if (this.isWatching || this.isConnectingWatch) {
       return false;
     }
 
@@ -167,9 +168,28 @@ export class StreamPage {
   async startWatching(): Promise<void> {
     if (!this.canStartWatch) return;
 
+    this.isConnectingWatch = true;
+    this.cdr.markForCheck();
+
     try {
       // Clean up old listeners before creating new ones
       this.cleanupWatchListeners();
+
+      // Listen for events BEFORE initiating connection so early errors/events aren't missed
+      this.serverNotStreamingUnlisten = await listen('server-not-streaming', () => {
+        this.toastService.show('Server is not streaming', 'danger');
+        this.isWatching = false;
+        this.isConnectingWatch = false;
+        this.cleanupWatchListeners();
+        this.cdr.markForCheck();
+      });
+
+      this.streamingStoppedUnlisten = await listen('streaming-stopped', () => {
+        this.isWatching = false;
+        this.isConnectingWatch = false;
+        this.cleanupWatchListeners();
+        this.cdr.markForCheck();
+      });
 
       const inviteLink = this.watchForm.value.inviteLink?.trim();
 
@@ -186,24 +206,14 @@ export class StreamPage {
       }
 
       this.isWatching = true;
-
       console.log('Watching started');
-
-      this.serverNotStreamingUnlisten = await listen('server-not-streaming', () => {
-        this.toastService.show('Server is not streaming', 'danger');
-        this.cdr.markForCheck();
-      });
-
-      this.streamingStoppedUnlisten = await listen('streaming-stopped', () => {
-        this.isWatching = false;
-        this.cleanupWatchListeners();
-        this.cdr.markForCheck();
-      });
-
-      this.cdr.markForCheck();
     } catch (error) {
       console.error('Failed to start watching:', error);
+      this.toastService.show('Failed to connect: ' + (error ?? 'server not responding'), 'danger');
       this.isWatching = false;
+      this.cleanupWatchListeners();
+    } finally {
+      this.isConnectingWatch = false;
       this.cdr.markForCheck();
     }
   }
@@ -211,12 +221,13 @@ export class StreamPage {
   async stopWatching(): Promise<void> {
     try {
       await callCommand('stop_watching', {});
-      this.isWatching = false; // ← this is missing
-      this.stopStatusPolling();
-      this.cleanupWatchListeners();
-      this.cdr.markForCheck();
     } catch (error) {
       console.error('Failed to stop watching:', error);
+    } finally {
+      this.isWatching = false;
+      this.isConnectingWatch = false;
+      this.stopStatusPolling();
+      this.cleanupWatchListeners();
       this.cdr.markForCheck();
     }
   }

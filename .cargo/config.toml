@@ -1,0 +1,2 @@
+[env]
+RUST_LOG = { value = "warn,streaming_server_app=debug,app_lib=debug,streaming_server=debug", force = false }
