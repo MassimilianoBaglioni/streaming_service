@@ -159,6 +159,17 @@ impl AppState {
         Ok(self.iroh_endpoint.clone())
     }
 
+    pub async fn renew_iroh_endpoint(&self) -> Result<Endpoint, IrohProtocolError> {
+        let mut guard = self.iroh_endpoint.lock().await;
+        if let Some(old) = guard.take() {
+            old.close().await; // older iroh versions take (error_code, reason)
+        }
+        let endpoint = build_endpoint().await?;
+        *guard = Some(endpoint.clone());
+        info!("Iroh endpoint renewed");
+        Ok(endpoint)
+    }
+
     pub fn new(capture_backend: CaptureBackend) -> Self {
         Self {
             streaming_session: Arc::new(Mutex::new(None)),

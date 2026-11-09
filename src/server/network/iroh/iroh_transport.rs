@@ -68,7 +68,7 @@ impl IrohProtocol {
             }
         });
 
-        let cancel_for_client_events = self.cancellation_token.clone();
+        let _ = self.cancellation_token.clone();
     }
 
     pub async fn stop_streaming(mut self) {

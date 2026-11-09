@@ -37,11 +37,12 @@ impl ServerState {
                     .serialized_sender()
                     .send(&StreamingEvent::ServerEndsStream)
                     .inspect_err(|e| warn!("Failed to send stop event from server: {e}"));
-                info!("Stop streaming event sent to client");
             }
             _ => {}
         }
 
+        // Do not close the event transport before the stop notification is sent.
+        // The queued ServerEndsStream event must be delivered to the client.
         self.events_sender.close().await;
         info!("Events sender closed");
 

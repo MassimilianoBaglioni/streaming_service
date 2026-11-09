@@ -35,8 +35,8 @@ pub enum TransmissionError {
 
 #[derive(Debug)]
 pub struct PeerCommunicationChannel {
-    send_handle: JoinHandle<()>,
-    recv_handle: JoinHandle<()>,
+    send_handle: Option<JoinHandle<()>>,
+    recv_handle: Option<JoinHandle<()>>,
     listen_channel: broadcast::Sender<Bytes>,
     feed_channel: UnboundedSender<Bytes>,
     shutdown: CancellationToken,
@@ -119,8 +119,8 @@ impl PeerCommunicationChannel {
         });
 
         Self {
-            send_handle,
-            recv_handle,
+            send_handle: Some(send_handle),
+            recv_handle: Some(recv_handle),
             feed_channel,
             listen_channel,
             shutdown,
@@ -129,8 +129,15 @@ impl PeerCommunicationChannel {
 
     pub async fn close(&mut self) {
         self.shutdown.cancel();
-        self.send_handle.abort();
-        self.recv_handle.abort();
+
+        // Let the spawned tasks exit cleanly so queued event payloads can flush
+        // instead of being dropped by aborting the transport mid-send.
+        if let Some(handle) = self.send_handle.take() {
+            let _ = handle.await;
+        }
+        if let Some(handle) = self.recv_handle.take() {
+            let _ = handle.await;
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {

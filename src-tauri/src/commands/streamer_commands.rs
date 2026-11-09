@@ -210,27 +210,31 @@ pub async fn stop_streaming(state: State<'_, AppState>) -> Result<(), CommandErr
 
 #[tauri::command]
 pub async fn generate_ticket(state: State<'_, AppState>) -> Result<EndpointTicket, CommandError> {
-    let endpoint = state.get_or_create_iroh_endpoint().await?;
+    {
+        let mut session = state.lock_session().await?;
+        if let Some(Session::Streamer(streamer_state)) = session.as_mut() {
+            match streamer_state {
+                StreamerState::Waiting(_) => {
+                    if let Some(handle) = streamer_state.clear_waiting_iroh_accept() {
+                        handle.abort();
+                    }
+                }
+                StreamerState::Ready(_) => {
+                    let _ = streamer_state.stop_streaming().await;
+                }
+                StreamerState::Empty => {}
+            }
+        }
+    }
 
-    let ticket = EndpointTicket::new(
-        endpoint
-            .lock()
-            .await
-            .as_ref()
-            .ok_or(IrohStateError::NoEndpointFound)?
-            .addr(),
-    );
+    let endpoint = state.renew_iroh_endpoint().await?;
+
+    let ticket = EndpointTicket::new(endpoint.addr());
 
     state.set_session(Session::new_streamer()).await;
 
-    let streaming_session = state.streaming_session.clone();
-
     let accept_client_handler = tokio::spawn({
-        let endpoint = endpoint
-            .lock()
-            .await
-            .clone()
-            .ok_or(IrohStateError::NoEndpointFound)?;
+        let endpoint = endpoint.clone();
 
         async move {
             info!("Generate ticket routine started");

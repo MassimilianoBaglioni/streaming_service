@@ -108,6 +108,26 @@ impl StreamerState {
         }
     }
 
+    pub fn clear_waiting_iroh_accept(
+        &mut self,
+    ) -> Option<JoinHandle<anyhow::Result<IrohNetworkInfo, IrohProtocolError>>> {
+        match self {
+            StreamerState::Waiting(ProtocolBuilder::Iroh(builder)) => {
+                if let Some(handle) = builder.accept_client_handle.take() {
+                    handle.abort();
+                    Some(handle)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn reset_to_empty(&mut self) {
+        *self = StreamerState::Empty;
+    }
+
     // Takes ownership. It is meant to build the stream state once
     pub fn take_iroh_builder(self) -> Result<IrohBuilder, StreamingStateError> {
         match self {
@@ -120,6 +140,12 @@ impl StreamerState {
         match std::mem::replace(self, StreamerState::Empty) {
             StreamerState::Ready(server_session) => {
                 server_session.stop_streaming().await;
+                Ok(())
+            }
+            StreamerState::Waiting(ProtocolBuilder::Iroh(builder)) => {
+                if let Some(handle) = builder.accept_client_handle {
+                    handle.abort();
+                }
                 Ok(())
             }
             other => {

@@ -97,6 +97,10 @@ pub async fn start_watching_iroh(
         Ok(session) => session,
         Err(e) => {
             info!("Iroh connection refused {:?}", e);
+            if let Some(old_endpoint) = state.iroh_endpoint.lock().await.take() {
+                old_endpoint.close().await;
+            }
+            *state.streaming_session.lock().await = None;
             let _ = app.emit("server-not-streaming", ());
             return Err(CommandError::from(e));
         }
