@@ -78,7 +78,7 @@ impl ClientSession {
         connection_config_direct: DirectNetworkRequest,
         frontend_events_receiver: Receiver<StreamingEvent>,
     ) -> Result<Self, ClientError> {
-        let address = connection_config_direct.address.clone();
+        let address = connection_config_direct.address;
 
         let pipeline = Builder::new(decoder)
             .build_pipeline(ConnectionConfig::Direct(connection_config_direct))?;
@@ -96,7 +96,7 @@ impl ClientSession {
     async fn start_watching_task(&mut self) -> Result<(), ClientError> {
         self.pipeline
             .set_state(gst::State::Playing)
-            .map_err(|e| PipelineError::ChangeStateError(e))?;
+            .map_err(PipelineError::ChangeStateError)?;
 
         match &mut self.protocol {
             ClientProtocol::Iroh(protocol) => {
