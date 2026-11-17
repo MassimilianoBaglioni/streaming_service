@@ -35,9 +35,9 @@ pub fn windows_direct(request: DirectConnectionRequest) -> Result<Pipeline, Pipe
         request.client_port,
     );
 
-    Ok(gstreamer::parse::launch(&pipeline_description)?
+    gstreamer::parse::launch(&pipeline_description)?
         .downcast::<Pipeline>()
-        .map_err(|_| PipelineError::FailedDowncast)?)
+        .map_err(|_| PipelineError::FailedDowncast)
 }
 pub fn windows_iroh(request: IrohConnectionRequest) -> Result<Pipeline, PipelineError> {
     let video_scale_method = request.scaling_method.as_gst_method();
@@ -66,7 +66,7 @@ pub fn windows_iroh(request: IrohConnectionRequest) -> Result<Pipeline, Pipeline
         request.bitrate,
     );
 
-    Ok(gstreamer::parse::launch(&pipeline_description)?
+    gstreamer::parse::launch(&pipeline_description)?
         .downcast::<Pipeline>()
-        .map_err(|_| PipelineError::FailedDowncast)?)
+        .map_err(|_| PipelineError::FailedDowncast)
 }

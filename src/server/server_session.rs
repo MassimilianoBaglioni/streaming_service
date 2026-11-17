@@ -30,15 +30,11 @@ impl ServerState {
     }
 
     pub async fn shutdown(mut self, stop_reason: StopStreamingReason) {
-        match stop_reason {
-            StopStreamingReason::ServerFrontendQuit => {
-                let _ = self
-                    .events_sender
-                    .serialized_sender()
-                    .send(&StreamingEvent::ServerEndsStream)
-                    .inspect_err(|e| warn!("Failed to send stop event from server: {e}"));
-            }
-            _ => {}
+        if let StopStreamingReason::ServerFrontendQuit = stop_reason {
+            let _ =self.events_sender
+                .serialized_sender()
+                .send(&StreamingEvent::ServerEndsStream)
+                .inspect_err(|e| warn!("Failed to send stop event from server: {e}"));
         }
 
         // Do not close the event transport before the stop notification is sent.

@@ -16,7 +16,7 @@ impl ClientProtocol {
         endpoint: &Endpoint,
         ticket: EndpointTicket,
     ) -> Result<(Self, PeerCommunicationChannel), IrohProtocolError> {
-        let (iroh_protocol, events_stream) = IrohProtocol::accept(&endpoint, ticket).await?;
+        let (iroh_protocol, events_stream) = IrohProtocol::accept(endpoint, ticket).await?;
         Ok((Self::Iroh(iroh_protocol), events_stream))
     }
 
