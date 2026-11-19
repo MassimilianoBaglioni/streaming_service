@@ -1,40 +1,40 @@
 {
-	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "streaming_server",
-	"version": "0.1.0",
-	"identifier": "com.massimiliano.streaming",
-	"build": {
-		"frontendDist": "../angular-frontend/dist/angular-frontend/browser",
-		"devUrl": "http://localhost:4200",
-		"beforeDevCommand": "npm run start --prefix angular-frontend",
-		"beforeBuildCommand": "npm run build"
-	},
-	"app": {
-		"windows": [
-			{
-				"title": "streaming_server",
-				"width": 1400,
-				"height": 900,
-				"resizable": true,
-				"fullscreen": false
-			}
-		],
-		"security": {
-			"csp": null
-		}
-	},
-	"bundle": {
-		"active": true,
-		"targets": "all",
-		"icon": [
-			"icons/32x32.png",
-			"icons/128x128.png",
-			"icons/128x128@2x.png",
-			"icons/icon.icns",
-			"icons/icon.ico"
-		],
-		"resources": {
-			"../gstreamer_bundle/": ""
-		}
-	}
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "streaming_server",
+  "version": "0.1.0",
+  "identifier": "com.massimiliano.streaming",
+  "build": {
+    "frontendDist": "../angular-frontend/dist/angular-frontend/browser",
+    "devUrl": "http://localhost:4200",
+    "beforeDevCommand": "npm run start --prefix angular-frontend",
+    "beforeBuildCommand": "npm run build --prefix angular-frontend"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "streaming_server",
+        "width": 1400,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../gstreamer_bundle/": ""
+    }
+  }
 }

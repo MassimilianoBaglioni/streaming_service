@@ -16,6 +16,7 @@ use windows::Graphics::Capture::{
 };
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
+use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
@@ -134,9 +135,17 @@ impl WindowsCaptureSource {
 
         let frame_handler = FrameArrivedHandler {
             app_src: app_src.as_ref().clone(),
+            device: device.clone(),
             context,
-            staging_texture,
+            state: std::sync::Mutex::new(CaptureState {
+                staging_texture,
+                width,
+                height,
+                requested_w: size.Width,
+                requested_h: size.Height,
+            }),
             pixel_format,
+            buffer_count,
             target_frame_interval,
             last_frame_nanos: Arc::new(AtomicU64::new(0)),
         };
@@ -198,12 +207,22 @@ impl WindowsCaptureSource {
     }
 }
 
+struct CaptureState {
+    staging_texture: ID3D11Texture2D,
+    width: u32,
+    height: u32,
+    requested_w: i32,
+    requested_h: i32,
+}
+
 pub struct FrameArrivedHandler {
     app_src: AppSrc,
+    device: ID3D11Device,
     context: ID3D11DeviceContext,
-    staging_texture: ID3D11Texture2D,
+    state: std::sync::Mutex<CaptureState>,
     pixel_format: DirectXPixelFormat,
-    target_frame_interval: std::time::Duration,
+    buffer_count: i32,
+    target_frame_interval: Duration,
     last_frame_nanos: Arc<AtomicU64>,
 }
 
@@ -223,110 +242,124 @@ impl FrameArrivedHandler {
             .unwrap()
             .as_nanos() as u64;
         let last = self.last_frame_nanos.load(Ordering::Relaxed);
-        let interval_nanos = self.target_frame_interval.as_nanos() as u64;
-
-        if now - last < interval_nanos {
+        if now - last < self.target_frame_interval.as_nanos() as u64 {
             return Ok(());
         }
         self.last_frame_nanos.store(now, Ordering::Relaxed);
 
-        let size = match frame.ContentSize() {
-            Ok(s) => s,
-            Err(e) => {
-                error!("ContentSize failed: {:?}", e);
-                return Ok(());
-            }
-        };
+        let content = frame.ContentSize()?;
+        if content.Width <= 0 || content.Height <= 0 {
+            return Ok(()); // window minimized
+        }
 
-        // A surface is an interface to the texture stored in VRAM. The lines below copy the data from VRAM to RAM for the CPU.
-        let surface = match frame.Surface() {
-            Ok(s) => s,
-            Err(e) => {
-                error!("Surface failed: {:?}", e);
-                return Ok(());
-            }
-        };
+        let surface = frame.Surface()?;
+        let dxgi_access: IDirect3DDxgiInterfaceAccess = surface.cast()?;
+        let capture_texture: ID3D11Texture2D = unsafe { dxgi_access.GetInterface()? };
 
-        let dxgi_access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
-            Ok(a) => a,
-            Err(e) => {
-                error!("Cast to IDirect3DDxgiInterfaceAccess failed: {:?}", e);
-                return Ok(());
-            }
-        };
+        // Real size of this frame's texture: the source of truth for buffer size
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        unsafe { capture_texture.GetDesc(&mut desc) };
 
-        let capture_texture: ID3D11Texture2D = match unsafe { dxgi_access.GetInterface() } {
-            Ok(t) => t,
-            Err(e) => {
-                error!("GetInterface texture failed: {:?}", e);
-                return Ok(());
-            }
-        };
+        let mut state = self.state.lock().unwrap();
 
-        // copy from GPU-only capture texture → staging texture (CPU accessible)
+        // Texture size changed (after a pool Recreate): rebuild staging, update caps
+        if state.width != desc.Width || state.height != desc.Height {
+            let staging_desc = D3D11_TEXTURE2D_DESC {
+                Width: desc.Width,
+                Height: desc.Height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: desc.Format,
+                SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                MiscFlags: 0,
+            };
+            let mut tex: Option<ID3D11Texture2D> = None;
+            unsafe {
+                self.device
+                    .CreateTexture2D(&staging_desc, None, Some(&mut tex))?
+            };
+            state.staging_texture = tex.unwrap();
+            state.width = desc.Width;
+            state.height = desc.Height;
+
+            if let Some(mut caps) = self.app_src.caps() {
+                {
+                    let c = caps.make_mut();
+                    c.set("width", desc.Width as i32);
+                    c.set("height", desc.Height as i32);
+                }
+                self.app_src.set_caps(Some(&caps));
+            }
+        }
+
         unsafe {
             self.context
-                .CopyResource(&self.staging_texture, &capture_texture)
+                .CopyResource(&state.staging_texture, &capture_texture)
         };
 
-        // map the STAGING texture, not the capture texture
-        let dxgi_staging: IDXGISurface = match self.staging_texture.cast() {
-            Ok(s) => s,
-            Err(e) => {
-                error!("Staging cast failed: {:?}", e);
-                return Ok(());
-            }
-        };
-
+        let dxgi_staging: IDXGISurface = state.staging_texture.cast()?;
         let mut mapped_rect = DXGI_MAPPED_RECT::default();
-        if let Err(e) = unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ) } {
-            error!("Map failed: {:?}", e);
-            return Ok(());
-        }
+        unsafe { dxgi_staging.Map(&mut mapped_rect, DXGI_MAP_READ)? };
 
         let pitch = mapped_rect.Pitch as usize;
         let data_ptr = mapped_rect.pBits;
 
-        let width = size.Width as usize;
-        let height = size.Height as usize;
+        let width = state.width as usize;
+        let height = state.height as usize;
         let bytes_per_pixel = match self.pixel_format {
             DirectXPixelFormat::B8G8R8A8UIntNormalized => 4,
             DirectXPixelFormat::R16G16B16A16Float => 8,
             _ => panic!("Unsupported pixel format"),
         };
         let row_size = width * bytes_per_pixel;
-        let total_size = row_size * height;
 
-        // Gstreamer has an internal buffers pooling, this is not an allocation per iteration, no optimization needed.
-        let mut gst_buffer = gstreamer::Buffer::with_size(total_size)
+        let mut gst_buffer = gstreamer::Buffer::with_size(row_size * height)
             .expect("Failed to allocate the gstreamer buffer");
-
         {
             let buffer_ref = gst_buffer.get_mut().unwrap();
-
             let mut map = buffer_ref
                 .map_writable()
                 .expect("Failed to map GStreamer buffer");
             let dst = map.as_mut_slice();
-
             for row in 0..height {
-                let src_offset = row * pitch;
-                let dst_offset = row * row_size;
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        data_ptr.add(src_offset),
-                        dst.as_mut_ptr().add(dst_offset),
+                        data_ptr.add(row * pitch),
+                        dst.as_mut_ptr().add(row * row_size),
                         row_size,
                     );
                 }
             }
         }
+        unsafe { dxgi_staging.Unmap()? };
 
-        unsafe { dxgi_staging.Unmap().expect("Unmap failed") };
+        if let Err(e) = self.app_src.push_buffer(gst_buffer) {
+            error!("push_buffer failed: {:?}", e);
+        }
 
-        self.app_src
-            .push_buffer(gst_buffer)
-            .expect("Failed to push buffer");
+        // Window size differs from what we asked the pool for: resize the pool
+        if content.Width != state.requested_w || content.Height != state.requested_h {
+            let dxgi_device: IDXGIDevice = self.device.cast()?;
+            let inspectable = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)? };
+            let winrt_device: IDirect3DDevice = inspectable.cast()?;
+            frame_pool.Recreate(
+                &winrt_device,
+                self.pixel_format,
+                self.buffer_count,
+                SizeInt32 {
+                    Width: content.Width,
+                    Height: content.Height,
+                },
+            )?;
+            state.requested_w = content.Width;
+            state.requested_h = content.Height;
+        }
 
         Ok(())
     }
